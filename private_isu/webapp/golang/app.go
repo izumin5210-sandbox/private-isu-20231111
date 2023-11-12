@@ -317,7 +317,7 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 	template.Must(template.ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("login.html")),
-	).Execute(w, struct {
+	).ExecuteTemplate(w, "layout", struct {
 		Me    User
 		Flash string
 	}{me, getFlash(w, r, "notice")})
@@ -356,7 +356,7 @@ func getRegister(w http.ResponseWriter, r *http.Request) {
 	template.Must(template.ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("register.html")),
-	).Execute(w, struct {
+	).ExecuteTemplate(w, "layout", struct {
 		Me    User
 		Flash string
 	}{User{}, getFlash(w, r, "notice")})
@@ -422,9 +422,6 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-var indexTmplCache map[string]*template.Template = map[string]*template.Template{}
-var indexTmplCacheMu sync.RWMutex
-
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
@@ -445,45 +442,22 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		return
 	}
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
+	postsTmpl, err := postsTemplate(posts, false)
+	if err != nil {
+		log.Print(err)
+		return
 	}
 
-	cacheKey := fmt.Sprintf("%d:%d:%d", me.ID, posts[0].ID, posts[0].CommentCount)
+	tmpl := template.Must(template.Must(postsTmpl.Clone()).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("index.html"),
+	))
 
-	indexTmplCacheMu.RLock()
-	cachedTmpl, ok := indexTmplCache[cacheKey]
-	indexTmplCacheMu.RUnlock()
-
-	if !ok {
-		indexTmplCacheMu.Lock()
-		defer indexTmplCacheMu.Unlock()
-
-		var buf bytes.Buffer
-		template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-			getTemplPath("layout.html"),
-			getTemplPath("index.html"),
-			getTemplPath("posts.html"),
-			getTemplPath("post.html"),
-		)).Execute(&buf, struct {
-			Posts     []Post
-			Me        User
-			CSRFToken string
-			Flash     string
-		}{posts, me, "{{ .CSRFToken }}", "{{ .Flash }}"})
-
-		cachedTmpl = template.Must(template.New("layout.html").Parse(buf.String()))
-		indexTmplCache[cacheKey] = cachedTmpl
-	}
-
-	cachedTmpl.Execute(w, struct {
+	tmpl.ExecuteTemplate(w, "layout", struct {
+		Me        User
 		CSRFToken string
 		Flash     string
-	}{
-		CSRFToken: getCSRFToken(r),
-		Flash:     getFlash(w, r, "notice"),
-	})
+	}{me, getCSRFToken(r), getFlash(w, r, "notice")})
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
@@ -504,12 +478,6 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	results := []Post{}
 
 	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
 	if err != nil {
 		log.Print(err)
 		return
@@ -551,25 +519,34 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	posts, err := makePosts(results, "{{ .CSRFToken }}", false)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	postsTmpl, err := postsTemplate(posts, false)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
 	me := getSessionUser(r)
 
 	fmap := template.FuncMap{
 		"imageURL": imageURL,
 	}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	template.Must(template.Must(postsTmpl.Clone()).Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("user.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts          []Post
+	)).ExecuteTemplate(w, "layout", struct {
 		User           User
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
 		Me             User
-	}{posts, user, postCount, commentCount, commentedCount, me})
+		CSRFToken      string
+	}{user, postCount, commentCount, commentedCount, me, getCSRFToken(r)})
 }
 
 func getPosts(w http.ResponseWriter, r *http.Request) {
@@ -601,7 +578,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
+	posts, err := makePosts(results, "{{ .CSRFToken }}", false)
 	if err != nil {
 		log.Print(err)
 		return
@@ -612,14 +589,15 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
+	postsTmpl, err := postsTemplate(posts, false)
+	if err != nil {
+		log.Print(err)
+		return
 	}
 
-	template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, posts)
+	template.Must(postsTmpl.Clone()).Execute(w, struct {
+		CSRFToken string
+	}{getCSRFToken(r)})
 }
 
 func getPostsID(w http.ResponseWriter, r *http.Request) {
@@ -660,7 +638,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		getTemplPath("layout.html"),
 		getTemplPath("post_id.html"),
 		getTemplPath("post.html"),
-	)).Execute(w, struct {
+	)).ExecuteTemplate(w, "layout", struct {
 		Post Post
 		Me   User
 	}{p, me})
@@ -812,7 +790,7 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 	template.Must(template.ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("banned.html")),
-	).Execute(w, struct {
+	).ExecuteTemplate(w, "layout", struct {
 		Users     []User
 		Me        User
 		CSRFToken string
@@ -849,6 +827,46 @@ func postAdminBanned(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/admin/banned", http.StatusFound)
+}
+
+var postsTmplCache map[string]*template.Template = map[string]*template.Template{}
+var postsTmplCacheMu sync.RWMutex
+
+func postsTemplate(results []Post, allComments bool) (*template.Template, error) {
+	fmap := template.FuncMap{
+		"imageURL": imageURL,
+	}
+
+	cacheKey := fmt.Sprintf("%s/%t", strings.Join(
+		lo.Map(results, func(p Post, _ int) string { return fmt.Sprintf("%d:%d", p.ID, p.CommentCount) }),
+		"/",
+	), allComments)
+
+	postsTmplCacheMu.RLock()
+	cachedTmpl, ok := postsTmplCache[cacheKey]
+	postsTmplCacheMu.RUnlock()
+
+	if !ok {
+		postsTmplCacheMu.Lock()
+		defer postsTmplCacheMu.Unlock()
+		var buf bytes.Buffer
+
+		err := template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
+			getTemplPath("posts.html"),
+			getTemplPath("post.html"),
+		)).Execute(&buf, results)
+		if err != nil {
+			return nil, err
+		}
+
+		cachedTmpl, err = template.New("posts.html").Parse(buf.String())
+		if err != nil {
+			return nil, err
+		}
+		postsTmplCache[cacheKey] = cachedTmpl
+	}
+
+	return cachedTmpl, nil
 }
 
 func main() {
