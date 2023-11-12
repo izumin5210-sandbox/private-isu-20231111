@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -104,6 +105,11 @@ func tryLogin(accountName, password string) *User {
 	} else {
 		return nil
 	}
+}
+
+func validateUser(accountName, password string) bool {
+	return regexp.MustCompile(`\A[0-9a-zA-Z_]{3,}\z`).MatchString(accountName) &&
+		regexp.MustCompile(`\A[0-9a-zA-Z_]{6,}\z`).MatchString(password)
 }
 
 func digest(src string) string {
