@@ -200,6 +200,10 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 		}
 	}
 
+	if len(posts) == 0 {
+		return posts, nil
+	}
+
 	postIDs := lo.Map(posts, func(p Post, _ int) int { return p.ID })
 
 	// Post.CommentCount 取得
@@ -236,7 +240,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 		}
 
 		// Comment.User 取得
-		{
+		if len(comments) > 0 {
 			userIDs := lo.Map(comments, func(c Comment, _ int) int { return c.UserID })
 			var users []User
 			q, args, err := sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", userIDs)
