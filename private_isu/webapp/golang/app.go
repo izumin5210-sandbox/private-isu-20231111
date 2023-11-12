@@ -22,6 +22,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
+	"github.com/samber/lo"
 )
 
 var (
@@ -174,49 +175,90 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
 	var posts []Post
 
-	for _, p := range results {
-		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
+	// Post.User 取得, 削除済みユーザーは除外, ページあたりの件数で絞り込み
+	{
+		var users []User
+		userIDs := lo.Map(results, func(p Post, _ int) int { return p.UserID })
+		q, args, err := sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", userIDs)
+		if err != nil {
+			return nil, err
+		}
+		err = db.Select(&users, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		userByID := lo.KeyBy(users, func(u User) int { return u.ID })
+		for _, p := range results {
+			p.User = userByID[p.UserID]
+			if p.User.DelFlg == 0 {
+				posts = append(posts, p)
+			}
+			if len(posts) >= postsPerPage {
+				break
+			}
+		}
+	}
+
+	postIDs := lo.Map(posts, func(p Post, _ int) int { return p.ID })
+
+	// Post.CommentCount 取得
+	type PostCommentCount struct {
+		PostID       int `sql:"post_id"`
+		CommentCount int `sql:"count"`
+	}
+	var postCommentCnts []PostCommentCount
+	{
+		q, args, err := sqlx.In("SELECT `post_id`, count(1) AS `count` FROM `comments` WHERE `post_id` IN (?)", postIDs)
+		if err != nil {
+			return nil, err
+		}
+		err = db.Select(&postCommentCnts, q, args...)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Post.Comments 取得
+	var comments []Comment
+	{
+		q := "SELECT * FROM (SELECT *, ROW_NUMBER() OVER( PARTITION BY `post_id` ORDER BY `created_at` DESC) AS `rank` FROM `comments` WHERE `post_id` IN (?)) AS `comments` WHERE `rank` <= 3 ORDER BY `rank` DESC"
+		if allComments {
+			q = "SELECT * FROM `comments` AS `comments` WHERE `post_id` in (?) ORDER BY `created_at` DESC`"
+		}
+		q, args, err := sqlx.In(q, postIDs)
+		if err != nil {
+			return nil, err
+		}
+		err = db.Select(&comments, q, args...)
 		if err != nil {
 			return nil, err
 		}
 
-		query := "SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC"
-		if !allComments {
-			query += " LIMIT 3"
-		}
-		var comments []Comment
-		err = db.Select(&comments, query, p.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		for i := 0; i < len(comments); i++ {
-			err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
+		// Comment.User 取得
+		{
+			userIDs := lo.Map(comments, func(c Comment, _ int) int { return c.UserID })
+			var users []User
+			q, args, err := sqlx.In("SELECT * FROM `users` WHERE `id` IN (?)", userIDs)
 			if err != nil {
 				return nil, err
 			}
+			err = db.Select(&users, q, args...)
+			if err != nil {
+				return nil, err
+			}
+			userByUserID := lo.KeyBy(users, func(u User) int { return u.ID })
+			for _, c := range comments {
+				c.User = userByUserID[c.UserID]
+			}
 		}
+	}
 
-		// reverse
-		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
-			comments[i], comments[j] = comments[j], comments[i]
-		}
-
-		p.Comments = comments
-
-		err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
-		if err != nil {
-			return nil, err
-		}
-
+	commentsByPostID := lo.GroupBy(comments, func(c Comment) int { return c.PostID })
+	postCommentCntByPostID := lo.KeyBy(postCommentCnts, func(cnt PostCommentCount) int { return cnt.PostID })
+	for _, p := range posts {
+		p.Comments = commentsByPostID[p.ID]
+		p.CommentCount = postCommentCntByPostID[p.ID].CommentCount
 		p.CSRFToken = csrfToken
-
-		if p.User.DelFlg == 0 {
-			posts = append(posts, p)
-		}
-		if len(posts) >= postsPerPage {
-			break
-		}
 	}
 
 	return posts, nil
