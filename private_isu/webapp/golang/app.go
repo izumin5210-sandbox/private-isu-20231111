@@ -422,7 +422,7 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-var indexTmplCache map[string]*template.Template
+var indexTmplCache map[string]*template.Template = map[string]*template.Template{}
 var indexTmplCacheMu sync.RWMutex
 
 func getIndex(w http.ResponseWriter, r *http.Request) {
