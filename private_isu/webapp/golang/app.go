@@ -224,7 +224,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 	{
 		q := "SELECT * FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY `post_id` ORDER BY `created_at` DESC) AS `rank` FROM `comments` WHERE `post_id` IN (?)) AS `comments` WHERE `rank` <= 3 ORDER BY `rank` DESC"
 		if allComments {
-			q = "SELECT * FROM `comments` WHERE `post_id` in (?) ORDER BY `created_at` DESC`"
+			q = "SELECT * FROM `comments` WHERE `post_id` IN (?) ORDER BY `created_at` DESC"
 		}
 		q, args, err := sqlx.In(q, postIDs)
 		if err != nil {
