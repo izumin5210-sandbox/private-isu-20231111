@@ -203,8 +203,8 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	// Post.CommentCount 取得
 	type PostCommentCount struct {
-		PostID       int `sql:"post_id"`
-		CommentCount int `sql:"count"`
+		PostID       int `db:"post_id"`
+		CommentCount int `db:"count"`
 	}
 	var postCommentCnts []PostCommentCount
 	{
