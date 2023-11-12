@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	crand "crypto/rand"
 	"crypto/sha512"
 	"encoding/hex"
@@ -26,6 +27,7 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -420,42 +422,59 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+var indexSg singleflight.Group
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
 	results := []Post{}
 
-	err := db.Select(
-		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
-		postsPerPage,
-	)
+	resp, err, _ := indexSg.Do(fmt.Sprint(me.ID), func() (interface{}, error) {
+		err := db.Select(
+			&results,
+			"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
+			postsPerPage,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		posts, err := makePosts(results, "{{ .CSRFToken }}", false)
+		if err != nil {
+			return nil, err
+		}
+
+		fmap := template.FuncMap{
+			"imageURL": imageURL,
+		}
+
+		var buf bytes.Buffer
+		template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+			getTemplPath("layout.html"),
+			getTemplPath("index.html"),
+			getTemplPath("posts.html"),
+			getTemplPath("post.html"),
+		)).Execute(&buf, struct {
+			Posts     []Post
+			Me        User
+			CSRFToken string
+			Flash     string
+		}{posts, me, "{{ .CSRFToken }}", "{{ .Flash }}"})
+
+		return template.Must(template.New("layout.html").Parse(buf.String())), nil
+	})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts     []Post
-		Me        User
+	resp.(*template.Template).Execute(w, struct {
 		CSRFToken string
 		Flash     string
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
+	}{
+		CSRFToken: getCSRFToken(r),
+		Flash:     getFlash(w, r, "notice"),
+	})
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
