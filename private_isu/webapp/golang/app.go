@@ -54,7 +54,7 @@ type Post struct {
 	Body         string    `db:"body"`
 	Mime         string    `db:"mime"`
 	CreatedAt    time.Time `db:"created_at"`
-	CommentCount int
+	CommentCount int       `db:"comment_count"`
 	Comments     []Comment
 	User         User
 	CSRFToken    string
@@ -196,23 +196,6 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	postIDs := lo.Map(posts, func(p Post, _ int) int { return p.ID })
 
-	// Post.CommentCount 取得
-	type PostCommentCount struct {
-		PostID       int `db:"post_id"`
-		CommentCount int `db:"count"`
-	}
-	var postCommentCnts []PostCommentCount
-	{
-		q, args, err := sqlx.In("SELECT `post_id`, count(1) AS `count` FROM `comments` WHERE `post_id` IN (?) GROUP BY `post_id`", postIDs)
-		if err != nil {
-			return nil, err
-		}
-		err = db.Select(&postCommentCnts, q, args...)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// Post.Comments 取得
 	var comments []Comment
 	{
@@ -249,11 +232,9 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 	}
 
 	commentsByPostID := lo.GroupBy(comments, func(c Comment) int { return c.PostID })
-	postCommentCntByPostID := lo.KeyBy(postCommentCnts, func(cnt PostCommentCount) int { return cnt.PostID })
 
 	for i, p := range posts {
 		p.Comments = commentsByPostID[p.ID]
-		p.CommentCount = postCommentCntByPostID[p.ID].CommentCount
 		p.CSRFToken = csrfToken
 		posts[i] = p
 	}
@@ -427,7 +408,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	err := db.Select(
 		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
+		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at`, `comment_count` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
 		postsPerPage,
 	)
 	if err != nil {
@@ -475,7 +456,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	results := []Post{}
 
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
+	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
@@ -565,7 +546,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	results := []Post{}
 	err = db.Select(
 		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 WHERE `posts`.`created_at` <= ? ORDER BY `created_at` DESC LIMIT ?",
+		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at`, `comment_count` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 WHERE `posts`.`created_at` <= ? ORDER BY `created_at` DESC LIMIT ?",
 		t.Format(ISO8601Format), postsPerPage,
 	)
 	if err != nil {
@@ -603,7 +584,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `id` = ?", pid)
+	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `id` = ?", pid)
 	if err != nil {
 		log.Print(err)
 		return
@@ -752,8 +733,26 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx, err := db.Begin()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	defer tx.Rollback()
+
 	query := "INSERT INTO `comments` (`post_id`, `user_id`, `comment`) VALUES (?,?,?)"
-	_, err = db.Exec(query, postID, me.ID, r.FormValue("comment"))
+	_, err = tx.Exec(query, postID, me.ID, r.FormValue("comment"))
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	_, err = tx.Exec("UPDATE `posts` SET `comment_count` = `comment_count` + 1 WHERE `id` = ?", postID)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	err = tx.Commit()
 	if err != nil {
 		log.Print(err)
 		return
