@@ -66,7 +66,7 @@ type Comment struct {
 	UserID    int       `db:"user_id"`
 	Comment   string    `db:"comment"`
 	CreatedAt time.Time `db:"created_at"`
-	Rank      int       `db:"rank"`
+	Freshness int       `db:"freshness"`
 	User      User
 }
 
@@ -199,7 +199,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 	// Post.Comments 取得
 	var comments []Comment
 	{
-		q := "SELECT * FROM (SELECT *, ROW_NUMBER() OVER(PARTITION BY `post_id` ORDER BY `created_at` DESC) AS `rank` FROM `comments` WHERE `post_id` IN (?)) AS `comments` WHERE `rank` <= 3 ORDER BY `rank` DESC"
+		q := "SELECT * FROM `comments` WHERE `post_id` IN (?) AND `freshness` < 3 ORDER BY `created_at` DESC"
 		if allComments {
 			q = "SELECT * FROM `comments` WHERE `post_id` IN (?) ORDER BY `created_at` DESC"
 		}
@@ -740,12 +740,19 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	_, err = tx.Exec("UPDATE `comments` SET `freshness` = `freshness` + 1 WHERE `post_id` = ?", postID)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
 	query := "INSERT INTO `comments` (`post_id`, `user_id`, `comment`) VALUES (?,?,?)"
 	_, err = tx.Exec(query, postID, me.ID, r.FormValue("comment"))
 	if err != nil {
 		log.Print(err)
 		return
 	}
+
 	_, err = tx.Exec("UPDATE `posts` SET `comment_count` = `comment_count` + 1 WHERE `id` = ?", postID)
 	if err != nil {
 		log.Print(err)
