@@ -257,9 +257,9 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 	commentsByPostID := lo.GroupBy(comments, func(c Comment) int { return c.PostID })
 	postCommentCntByPostID := lo.KeyBy(postCommentCnts, func(cnt PostCommentCount) int { return cnt.PostID })
 	for _, p := range posts {
-		p.Comments = commentsByPostID[p.ID]
-		p.CommentCount = postCommentCntByPostID[p.ID].CommentCount
-		p.CSRFToken = csrfToken
+		(&p).Comments = commentsByPostID[p.ID]
+		(&p).CommentCount = postCommentCntByPostID[p.ID].CommentCount
+		(&p).CSRFToken = csrfToken
 	}
 
 	return posts, nil
