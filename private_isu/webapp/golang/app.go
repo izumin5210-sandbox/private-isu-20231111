@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"net/url"
 	"os"
 	"path"
@@ -918,6 +919,10 @@ func main() {
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		http.FileServer(http.Dir("../public")).ServeHTTP(w, r)
 	})
+
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
