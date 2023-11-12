@@ -450,7 +450,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		"imageURL": imageURL,
 	}
 
-	cacheKey := fmt.Sprintf("%d:%d", posts[0].ID, posts[0].CommentCount)
+	cacheKey := fmt.Sprintf("%d:%d:%d", me.ID, posts[0].ID, posts[0].CommentCount)
 
 	indexTmplCacheMu.RLock()
 	cachedTmpl, ok := indexTmplCache[cacheKey]
