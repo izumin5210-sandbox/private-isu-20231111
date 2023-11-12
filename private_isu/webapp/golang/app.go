@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -47,7 +48,6 @@ type User struct {
 type Post struct {
 	ID           int       `db:"id"`
 	UserID       int       `db:"user_id"`
-	Imgdata      []byte    `db:"imgdata"`
 	Body         string    `db:"body"`
 	Mime         string    `db:"mime"`
 	CreatedAt    time.Time `db:"created_at"`
@@ -556,7 +556,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-	err = db.Select(&results, "SELECT * FROM `posts` WHERE `id` = ?", pid)
+	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `id` = ?", pid)
 	if err != nil {
 		log.Print(err)
 		return
@@ -614,14 +614,18 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mime := ""
+	ext := ""
 	if file != nil {
 		// 投稿のContent-Typeからファイルのタイプを決定する
 		contentType := header.Header["Content-Type"][0]
 		if strings.Contains(contentType, "jpeg") {
+			ext = ".jpg"
 			mime = "image/jpeg"
 		} else if strings.Contains(contentType, "png") {
+			ext = ".png"
 			mime = "image/png"
 		} else if strings.Contains(contentType, "gif") {
+			ext = "gif"
 			mime = "image/gif"
 		} else {
 			session := getSession(r)
@@ -648,12 +652,11 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,?,?)"
+	query := "INSERT INTO `posts` (`user_id`, `mime`, `body`) VALUES (?,?,?)"
 	result, err := db.Exec(
 		query,
 		me.ID,
 		mime,
-		filedata,
 		r.FormValue("body"),
 	)
 	if err != nil {
@@ -667,39 +670,21 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
-}
-
-func getImage(w http.ResponseWriter, r *http.Request) {
-	pidStr := chi.URLParam(r, "id")
-	pid, err := strconv.Atoi(pidStr)
+	osFile, err := os.OpenFile(
+		filepath.Join("../public/image", fmt.Sprintf("%d%s", pid, ext)),
+		os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		log.Print(err)
 		return
 	}
-
-	post := Post{}
-	err = db.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
+	defer osFile.Close()
+	_, err = osFile.Write(filedata)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	ext := chi.URLParam(r, "ext")
-
-	if ext == "jpg" && post.Mime == "image/jpeg" ||
-		ext == "png" && post.Mime == "image/png" ||
-		ext == "gif" && post.Mime == "image/gif" {
-		w.Header().Set("Content-Type", post.Mime)
-		_, err := w.Write(post.Imgdata)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-		return
-	}
-
-	w.WriteHeader(http.StatusNotFound)
+	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
 }
 
 func postComment(w http.ResponseWriter, r *http.Request) {
@@ -841,11 +826,49 @@ func main() {
 	r.Get("/posts", getPosts)
 	r.Get("/posts/{id}", getPostsID)
 	r.Post("/", postIndex)
-	r.Get("/image/{id}.{ext}", getImage)
 	r.Post("/comment", postComment)
 	r.Get("/admin/banned", getAdminBanned)
 	r.Post("/admin/banned", postAdminBanned)
 	r.Get(`/@{accountName:[a-zA-Z]+}`, getAccountName)
+	r.Post("/exportImages", func(w http.ResponseWriter, r *http.Request) {
+		type Post struct {
+			ID      int    `db:"id"`
+			Mime    string `db:"mime"`
+			Imgdata []byte `db:"imgdata"`
+		}
+		var posts []Post
+		err := db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts`")
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		for _, p := range posts {
+			ext := ""
+			if p.Mime == "image/jpeg" {
+				ext = ".jpg"
+			} else if p.Mime == "image/png" {
+				ext = ".png"
+			} else if p.Mime == "image/gif" {
+				ext = ".gif"
+			}
+
+			osFile, err := os.OpenFile(
+				filepath.Join("../public/image", fmt.Sprintf("%d%s", p.ID, ext)),
+				os.O_WRONLY|os.O_CREATE, 0644)
+			if err != nil {
+				log.Print(err)
+				return
+			}
+			defer osFile.Close()
+			_, err = osFile.Write(p.Imgdata)
+			if err != nil {
+				log.Print(err)
+				return
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+	})
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
 		http.FileServer(http.Dir("../public")).ServeHTTP(w, r)
 	})
