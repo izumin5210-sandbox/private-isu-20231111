@@ -473,7 +473,8 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 			Flash     string
 		}{posts, me, "{{ .CSRFToken }}", "{{ .Flash }}"})
 
-		indexTmplCache[cacheKey] = template.Must(template.New("layout.html").Parse(buf.String()))
+		cachedTmpl = template.Must(template.New("layout.html").Parse(buf.String()))
+		indexTmplCache[cacheKey] = cachedTmpl
 	}
 
 	cachedTmpl.Execute(w, struct {
