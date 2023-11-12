@@ -746,7 +746,7 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 		log.Print(err)
 		return
 	}
-	_, err = tx.Exec("UPDATE INTO `posts` SET `comment_count` = `comment_count` + 1 WHERE `id` = ?", postID)
+	_, err = tx.Exec("UPDATE `posts` SET `comment_count` = `comment_count` + 1 WHERE `id` = ?", postID)
 	if err != nil {
 		log.Print(err)
 		return
