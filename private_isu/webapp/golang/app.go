@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -27,7 +28,6 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
-	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -422,31 +422,43 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-var indexSg singleflight.Group
+var indexTmplCache map[string]*template.Template
+var indexTmplCacheMu sync.RWMutex
 
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
 	results := []Post{}
 
-	resp, err, _ := indexSg.Do(fmt.Sprint(me.ID), func() (interface{}, error) {
-		err := db.Select(
-			&results,
-			"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
-			postsPerPage,
-		)
-		if err != nil {
-			return nil, err
-		}
+	err := db.Select(
+		&results,
+		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
+		postsPerPage,
+	)
+	if err != nil {
+		log.Print(err)
+		return
+	}
 
-		posts, err := makePosts(results, "{{ .CSRFToken }}", false)
-		if err != nil {
-			return nil, err
-		}
+	posts, err := makePosts(results, "{{ .CSRFToken }}", false)
+	if err != nil {
+		log.Print(err)
+		return
+	}
 
-		fmap := template.FuncMap{
-			"imageURL": imageURL,
-		}
+	fmap := template.FuncMap{
+		"imageURL": imageURL,
+	}
+
+	cacheKey := fmt.Sprintf("%d:%d", posts[0].ID, posts[0].CommentCount)
+
+	indexTmplCacheMu.RLock()
+	cachedTmpl, ok := indexTmplCache[cacheKey]
+	indexTmplCacheMu.RUnlock()
+
+	if !ok {
+		indexTmplCacheMu.Lock()
+		defer indexTmplCacheMu.Unlock()
 
 		var buf bytes.Buffer
 		template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -461,14 +473,10 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 			Flash     string
 		}{posts, me, "{{ .CSRFToken }}", "{{ .Flash }}"})
 
-		return template.Must(template.New("layout.html").Parse(buf.String())), nil
-	})
-	if err != nil {
-		log.Print(err)
-		return
+		indexTmplCache[cacheKey] = template.Must(template.New("layout.html").Parse(buf.String()))
 	}
 
-	resp.(*template.Template).Execute(w, struct {
+	cachedTmpl.Execute(w, struct {
 		CSRFToken string
 		Flash     string
 	}{
