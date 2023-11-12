@@ -564,7 +564,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	results := []Post{}
 	err = db.Select(
 		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 WHERE `posts.`.`created_at` <= ? ORDER BY `created_at` DESC LIMIT ?",
+		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 WHERE `posts`.`created_at` <= ? ORDER BY `created_at` DESC LIMIT ?",
 		t.Format(ISO8601Format), postsPerPage,
 	)
 	if err != nil {
