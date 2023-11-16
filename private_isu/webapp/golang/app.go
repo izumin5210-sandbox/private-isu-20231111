@@ -462,7 +462,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	err := db.Select(
 		&postHTMLs,
-		"SELECT `post_htmls`.* FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
+		"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
 		postsPerPage,
 	)
 	if err != nil {
@@ -645,7 +645,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var postHTML PostHTML
-	err = db.Get(&postHTML, "SELECT `post_htmls`.* FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` = ? AND `del_flg` = 0", pid)
+	err = db.Get(&postHTML, "SELECT `post_htmls`.`html_with_all_comments` FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` = ? AND `del_flg` = 0", pid)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			w.WriteHeader(http.StatusNotFound)
