@@ -217,39 +217,6 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 	}
 }
 
-func getPostsHTML(posts []Post, allComments bool) (string, error) {
-	var postHTMLs []PostHTML
-	if len(posts) > 0 {
-		postIDs := lo.Map(posts, func(p Post, _ int) int { return p.ID })
-		q, args, err := sqlx.In(("SELECT `post_htmls`.* FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` IN (?) AND `users`.`del_flg` = 0"), postIDs)
-		if err != nil {
-			return "", err
-		}
-		err = db.Select(&postHTMLs, q, args...)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	var buf bytes.Buffer
-
-	buf.WriteString(`{{ define "posts.html" }}` + "\n")
-	buf.WriteString(`<div class="isu-posts">`)
-
-	for _, p := range postHTMLs {
-		if allComments {
-			buf.WriteString(p.HTMLWithAllComments)
-		} else {
-			buf.WriteString(p.HTML)
-		}
-	}
-
-	buf.WriteString(`</div>`)
-	buf.WriteString("\n" + `{{ end }}`)
-
-	return buf.String(), nil
-}
-
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
 	var posts []Post
 
@@ -491,11 +458,11 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	results := []Post{}
+	postHTMLs := []PostHTML{}
 
 	err := db.Select(
-		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at`, `comment_count` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
+		&postHTMLs,
+		"SELECT `post_htmls`.* FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `created_at` DESC LIMIT ?",
 		postsPerPage,
 	)
 	if err != nil {
@@ -503,22 +470,26 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postsHTML, err := getPostsHTML(results, false)
-	if err != nil {
-		log.Print(err)
-		return
+	var buf bytes.Buffer
+
+	buf.WriteString(`{{ define "posts.html" }}` + "\n")
+	buf.WriteString(`<div class="isu-posts">`)
+
+	for _, p := range postHTMLs {
+		buf.WriteString(p.HTML)
 	}
+
+	buf.WriteString(`</div>`)
+	buf.WriteString("\n" + `{{ end }}`)
 
 	fmap := template.FuncMap{
 		"imageURL": imageURL,
 	}
 
-	// postsTmpl := template.Must(template.New("posts.html").Parse(postsHTML))
-
 	err = template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("index.html"),
-	)).Parse(postsHTML)).Execute(w, struct {
+	)).Parse(buf.String())).Execute(w, struct {
 		Me        User
 		CSRFToken string
 		Flash     string
