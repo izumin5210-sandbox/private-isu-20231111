@@ -82,7 +82,7 @@ type PostHTML struct {
 
 func prerenderPostHTML(postID int) error {
 	var rawPost Post
-	err := db.Get(&rawPost, "SELECT * FROM `posts` WHERE `id` = ?", postID)
+	err := db.Get(&rawPost, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `id` = ?", postID)
 	if err != nil {
 		return err
 	}
