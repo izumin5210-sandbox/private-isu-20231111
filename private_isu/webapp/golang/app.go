@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	crand "crypto/rand"
 	"crypto/sha512"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	_ "net/http/pprof"
 	"net/url"
@@ -68,6 +71,57 @@ type Comment struct {
 	CreatedAt time.Time `db:"created_at"`
 	Freshness int       `db:"freshness"`
 	User      User
+}
+
+type PostHTML struct {
+	PostID              int    `db:"post_id"`
+	UserID              int    `db:"user_id"`
+	HTML                string `db:"html"`
+	HTMLWithAllComments string `db:"html_with_all_comments"`
+}
+
+func prerenderPostHTML(postID int) error {
+	var rawPost Post
+	err := db.Get(&rawPost, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `id` = ?", postID)
+	if err != nil {
+		return err
+	}
+
+	posts, err := makePosts([]Post{rawPost}, "{{.CSRFToken}}", true)
+	if err != nil {
+		return err
+	}
+
+	if len(posts) == 0 {
+		return nil
+	}
+	post := posts[0]
+
+	fmap := template.FuncMap{
+		"imageURL": imageURL,
+	}
+	tmpl := template.Must(template.New("post.html").Funcs(fmap).ParseFiles(
+		getTemplPath("post.html"),
+	))
+
+	var htmlBuf, htmlWithAllCommentsBuf bytes.Buffer
+	err = tmpl.Execute(&htmlWithAllCommentsBuf, post)
+	if err != nil {
+		return err
+	}
+
+	post.Comments = post.Comments[:int(math.Min(3, float64(len(post.Comments))))]
+	err = tmpl.Execute(&htmlBuf, post)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec("INSERT INTO `post_htmls` (`post_id`, `user_id`, `html`, `html_with_all_comments`) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE `html` = ?, `html_with_all_comments` = ?", post.ID, post.UserID, htmlBuf.String(), htmlWithAllCommentsBuf.String(), htmlBuf.String(), htmlWithAllCommentsBuf.String())
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func init() {
@@ -404,11 +458,11 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	results := []Post{}
+	postHTMLs := []PostHTML{}
 
 	err := db.Select(
-		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at`, `comment_count` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 ORDER BY `created_at` DESC LIMIT ?",
+		&postHTMLs,
+		"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
 		postsPerPage,
 	)
 	if err != nil {
@@ -416,27 +470,31 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
+	var buf bytes.Buffer
+	buf.WriteString(`{{ define "posts.html" }}` + "\n")
+	buf.WriteString(`<div class="isu-posts">`)
+	for _, p := range postHTMLs {
+		buf.WriteString(p.HTML)
 	}
+	buf.WriteString(`</div>`)
+	buf.WriteString("\n" + `{{ end }}`)
 
 	fmap := template.FuncMap{
 		"imageURL": imageURL,
 	}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	err = template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("index.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts     []Post
+	)).Parse(buf.String())).Execute(w, struct {
 		Me        User
 		CSRFToken string
 		Flash     string
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
+	}{me, getCSRFToken(r), getFlash(w, r, "notice")})
+	if err != nil {
+		log.Print(err)
+		return
+	}
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
@@ -454,19 +512,22 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []Post{}
+	postHTMLs := []PostHTML{}
 
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
+	err = db.Select(&postHTMLs, "SELECT `html` FROM `posts` INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`user_id` = ? ORDER BY `created_at` DESC", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
+	var buf bytes.Buffer
+	buf.WriteString(`{{ define "posts.html" }}` + "\n")
+	buf.WriteString(`<div class="isu-posts">`)
+	for _, p := range postHTMLs {
+		buf.WriteString(p.HTML)
 	}
+	buf.WriteString(`</div>`)
+	buf.WriteString("\n" + `{{ end }}`)
 
 	commentCount := 0
 	err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
@@ -510,19 +571,17 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		"imageURL": imageURL,
 	}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("user.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts          []Post
+	)).Parse(buf.String())).Execute(w, struct {
+		CSRFToken      string
 		User           User
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
 		Me             User
-	}{posts, user, postCount, commentCount, commentedCount, me})
+	}{getCSRFToken(r), user, postCount, commentCount, commentedCount, me})
 }
 
 func getPosts(w http.ResponseWriter, r *http.Request) {
@@ -543,10 +602,10 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []Post{}
+	postHTMLs := []PostHTML{}
 	err = db.Select(
-		&results,
-		"SELECT `posts`.`id`, `user_id`, `body`, `mime`, `posts`.`created_at`, `comment_count` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 WHERE `posts`.`created_at` <= ? ORDER BY `created_at` DESC LIMIT ?",
+		&postHTMLs,
+		"SELECT `html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`created_at` <= ? ORDER BY `posts`.`created_at` DESC LIMIT ?",
 		t.Format(ISO8601Format), postsPerPage,
 	)
 	if err != nil {
@@ -554,25 +613,25 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if len(posts) == 0 {
+	if len(postHTMLs) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+
+	var buf bytes.Buffer
+	buf.WriteString(`<div class="isu-posts">`)
+	for _, p := range postHTMLs {
+		buf.WriteString(p.HTML)
+	}
+	buf.WriteString(`</div>`)
 
 	fmap := template.FuncMap{
 		"imageURL": imageURL,
 	}
 
-	template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, posts)
+	template.Must(
+		template.New("posts.html").Funcs(fmap).Parse(buf.String()),
+	).Execute(w, struct{ CSRFToken string }{getCSRFToken(r)})
 }
 
 func getPostsID(w http.ResponseWriter, r *http.Request) {
@@ -583,25 +642,16 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `id` = ?", pid)
+	var postHTML PostHTML
+	err = db.Get(&postHTML, "SELECT `post_htmls`.`html_with_all_comments` FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` = ? AND `del_flg` = 0", pid)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		log.Print(err)
 		return
 	}
-
-	posts, err := makePosts(results, getCSRFToken(r), true)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if len(posts) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	p := posts[0]
 
 	me := getSessionUser(r)
 
@@ -609,14 +659,13 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		"imageURL": imageURL,
 	}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("post_id.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Post Post
-		Me   User
-	}{p, me})
+	)).Parse(`{{ define "post.html" }}`+"\n"+postHTML.HTMLWithAllComments+"\n"+`{{ end }}`)).Execute(w, struct {
+		CSRFToken string
+		Me        User
+	}{getCSRFToken(r), me})
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
@@ -712,6 +761,12 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	err = prerenderPostHTML(int(pid))
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
 	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
 }
 
@@ -760,6 +815,12 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = tx.Commit()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	err = prerenderPostHTML(postID)
 	if err != nil {
 		log.Print(err)
 		return
@@ -914,6 +975,23 @@ func main() {
 			}
 			defer osFile.Close()
 			_, err = osFile.Write(p.Imgdata)
+			if err != nil {
+				log.Print(err)
+				return
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+	})
+	r.Post("/initializePostHTMLs", func(w http.ResponseWriter, r *http.Request) {
+		posts := []Post{}
+		err := db.Select(&posts, "SELECT `id` FROM `posts`")
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		for _, post := range posts {
+			err = prerenderPostHTML(post.ID)
 			if err != nil {
 				log.Print(err)
 				return
