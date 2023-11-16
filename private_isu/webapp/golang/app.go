@@ -462,7 +462,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	err := db.Select(
 		&postHTMLs,
-		"SELECT `post_htmls`.* FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `created_at` DESC LIMIT ?",
+		"SELECT `post_htmls`.* FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
 		postsPerPage,
 	)
 	if err != nil {
