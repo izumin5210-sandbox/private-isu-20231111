@@ -580,14 +580,24 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	template.Must(template.Must(getAccountTmpl.Clone()).Parse(buf.String())).Execute(w, struct {
+	var buf2 bytes.Buffer
+
+	err = getAccountTmpl.Execute(&buf, struct {
 		CSRFToken      string
 		User           User
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
 		Me             User
-	}{getCSRFToken(r), user, postCount, commentCount, commentedCount, me})
+		PostsHTML      string
+	}{getCSRFToken(r), user, postCount, commentCount, commentedCount, me, "{{.PostsHTML}}"})
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", buf2.String())
+	w.Write([]byte(html))
 }
 
 func getPosts(w http.ResponseWriter, r *http.Request) {
@@ -662,10 +672,20 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	template.Must(template.Must(getPostsIDTmpl.Clone()).Parse(`{{ define "post.html" }}`+"\n"+postHTML.HTMLWithAllComments+"\n"+`{{ end }}`)).Execute(w, struct {
+	var buf bytes.Buffer
+
+	err = getPostsIDTmpl.Execute(&buf, struct {
 		CSRFToken string
 		Me        User
-	}{getCSRFToken(r), me})
+		PostsHTML string
+	}{getCSRFToken(r), me, "{{.PostsHTML}}"})
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
+	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", postHTML.HTMLWithAllComments)
+	w.Write([]byte(html))
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
