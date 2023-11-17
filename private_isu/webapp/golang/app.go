@@ -580,7 +580,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	template.Must(getAccountTmpl.Parse(buf.String())).Execute(w, struct {
+	template.Must(template.Must(getAccountTmpl.Clone()).Parse(buf.String())).Execute(w, struct {
 		CSRFToken      string
 		User           User
 		PostCount      int
@@ -662,7 +662,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	template.Must(getPostsIDTmpl.Parse(`{{ define "post.html" }}`+"\n"+postHTML.HTMLWithAllComments+"\n"+`{{ end }}`)).Execute(w, struct {
+	template.Must(template.Must(getPostsIDTmpl.Clone()).Parse(`{{ define "post.html" }}`+"\n"+postHTML.HTMLWithAllComments+"\n"+`{{ end }}`)).Execute(w, struct {
 		CSRFToken string
 		Me        User
 	}{getCSRFToken(r), me})
