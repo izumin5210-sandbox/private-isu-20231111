@@ -752,13 +752,15 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filedata, err := io.ReadAll(file)
+	imgBuf, clean := bufPool.Get()
+	defer clean()
+	_, err = io.Copy(imgBuf, file)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	if len(filedata) > UploadLimit {
+	if imgBuf.Len() > UploadLimit {
 		session := getSession(r)
 		session.Values["notice"] = "ファイルサイズが大きすぎます"
 		session.Save(r, w)
@@ -793,7 +795,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer osFile.Close()
-	_, err = osFile.Write(filedata)
+	_, err = io.Copy(osFile, imgBuf)
 	if err != nil {
 		log.Print(err)
 		return
