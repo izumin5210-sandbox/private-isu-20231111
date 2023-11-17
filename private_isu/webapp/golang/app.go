@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -40,6 +41,27 @@ var (
 		"imageURL": imageURL,
 	}
 )
+
+type BufPool struct{ pool sync.Pool }
+
+func NewBufPool() *BufPool {
+	return &BufPool{pool: sync.Pool{
+		New: func() interface{} {
+			return new(bytes.Buffer)
+		},
+	}}
+}
+
+func (bp *BufPool) Get() (*bytes.Buffer, func()) {
+	buf := bp.pool.Get().(*bytes.Buffer)
+	put := func() {
+		buf.Reset()
+		bp.pool.Put(buf)
+	}
+	return buf, put
+}
+
+var bufPool = NewBufPool()
 
 const (
 	postsPerPage  = 20
@@ -111,14 +133,17 @@ func prerenderPostHTML(postID int) error {
 		getTemplPath("post.html"),
 	))
 
-	var htmlBuf, htmlWithAllCommentsBuf bytes.Buffer
-	err = tmpl.Execute(&htmlWithAllCommentsBuf, post)
+	htmlBuf, clean1 := bufPool.Get()
+	defer clean1()
+	htmlWithAllCommentsBuf, clean2 := bufPool.Get()
+	defer clean2()
+	err = tmpl.Execute(htmlWithAllCommentsBuf, post)
 	if err != nil {
 		return err
 	}
 
 	post.Comments = post.Comments[:int(math.Min(3, float64(len(post.Comments))))]
-	err = tmpl.Execute(&htmlBuf, post)
+	err = tmpl.Execute(htmlBuf, post)
 	if err != nil {
 		return err
 	}
@@ -481,26 +506,28 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 			postsPerPage,
 		)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
-		var buf bytes.Buffer
+		buf, clean := bufPool.Get()
+		defer clean()
 		buf.WriteString(`<div class="isu-posts">`)
 		for _, p := range postHTMLs {
 			buf.WriteString(p.HTML)
 		}
 		buf.WriteString(`</div>`)
-		return buf.String(), nil
+		return buf.Bytes(), nil
 	})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
+	postsHTML = bytes.ReplaceAll(postsHTML.([]byte), []byte(CSRFTokenPlaceholder), []byte(getCSRFToken(r)))
 
-	var buf2 bytes.Buffer
-	err = getIndexTmpl.Execute(&buf2, struct {
+	buf, clean := bufPool.Get()
+	defer clean()
+	err = getIndexTmpl.Execute(buf, struct {
 		Me        User
 		CSRFToken string
 		PostsHTML string
@@ -511,7 +538,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML.(string))))
+	w.Write([]byte(bytes.ReplaceAll(buf.Bytes(), []byte("{{.PostsHTML}}"), postsHTML.([]byte))))
 }
 
 var getAccountTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -542,7 +569,8 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var buf bytes.Buffer
+	buf, clean := bufPool.Get()
+	defer clean()
 	buf.WriteString(`<div class="isu-posts">`)
 	for _, p := range postHTMLs {
 		buf.WriteString(p.HTML)
@@ -568,9 +596,10 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	var buf2 bytes.Buffer
+	buf2, clean := bufPool.Get()
+	defer clean()
 
-	err = getAccountTmpl.Execute(&buf2, struct {
+	err = getAccountTmpl.Execute(buf2, struct {
 		CSRFToken      string
 		User           User
 		PostCount      int
@@ -584,7 +613,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r)))
+	html := bytes.ReplaceAll(buf2.Bytes(), []byte("{{.PostsHTML}}"), bytes.ReplaceAll(buf.Bytes(), []byte(CSRFTokenPlaceholder), []byte(getCSRFToken(r))))
 	w.Write([]byte(html))
 }
 
@@ -622,16 +651,17 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var buf bytes.Buffer
+	buf, clean := bufPool.Get()
+	defer clean()
 	buf.WriteString(`<div class="isu-posts">`)
 	for _, p := range postHTMLs {
 		buf.WriteString(p.HTML)
 	}
 	buf.WriteString(`</div>`)
 
-	html := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
+	html := bytes.ReplaceAll(buf.Bytes(), []byte(CSRFTokenPlaceholder), []byte(getCSRFToken(r)))
 
-	w.Write([]byte(html))
+	w.Write(html)
 }
 
 var getPostsIDTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -660,8 +690,9 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	var buf bytes.Buffer
-	err = getPostsIDTmpl.Execute(&buf, struct {
+	buf, clean := bufPool.Get()
+	defer clean()
+	err = getPostsIDTmpl.Execute(buf, struct {
 		CSRFToken string
 		Me        User
 		PostsHTML string
@@ -671,8 +702,8 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", postHTML.HTMLWithAllComments)
-	w.Write([]byte(html))
+	html := bytes.ReplaceAll(buf.Bytes(), []byte("{{.PostsHTML}}"), []byte(postHTML.HTMLWithAllComments))
+	w.Write(html)
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
