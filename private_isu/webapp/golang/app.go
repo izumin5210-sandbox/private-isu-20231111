@@ -490,9 +490,10 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		getTemplPath("index.html"),
 	)).Execute(w, struct {
 		Me        User
+		CSRFToken string
 		PostsHTML string
 		Flash     string
-	}{me, postsHTML, getFlash(w, r, "notice")})
+	}{me, getCSRFToken(r), postsHTML, getFlash(w, r, "notice")})
 	if err != nil {
 		log.Print(err)
 		return
