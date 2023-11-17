@@ -556,15 +556,15 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	posts := []Post{}
-	err = db.Select(&posts, "SELECT `id`, `comment_count` FROM `posts` WHERE `user_id` = ?", user.ID)
+	var cnts struct {
+		PostCount      int `db:"post_count"`
+		CommentedCount int `db:"commented_count"`
+	}
+	err = db.Get(&cnts, "SELECT COUNT(`id`) AS `post_count`, SUM(`comment_count`)  AS `commented_count` FROM `posts` WHERE `user_id` = ?", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
 	}
-
-	postCount := len(posts)
-	commentedCount := lo.SumBy(posts, func(p Post) int { return p.CommentCount })
 
 	me := getSessionUser(r)
 
@@ -578,7 +578,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		CommentedCount int
 		Me             User
 		PostsHTML      string
-	}{getCSRFToken(r), user, postCount, commentCount, commentedCount, me, "{{.PostsHTML}}"})
+	}{getCSRFToken(r), user, cnts.PostCount, commentCount, cnts.CommentedCount, me, "{{.PostsHTML}}"})
 	if err != nil {
 		log.Print(err)
 		return
