@@ -29,6 +29,7 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -466,29 +467,37 @@ var getIndexTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFi
 	getTemplPath("index.html"),
 ))
 
+var getIndexSg singleflight.Group
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	postHTMLs := []PostHTML{}
+	postsHTML, err, _ := getIndexSg.Do("index", func() (interface{}, error) {
+		postHTMLs := []PostHTML{}
 
-	err := db.Select(
-		&postHTMLs,
-		"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
-		postsPerPage,
-	)
+		err := db.Select(
+			&postHTMLs,
+			"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
+			postsPerPage,
+		)
+		if err != nil {
+			return "", err
+		}
+
+		var buf bytes.Buffer
+		buf.WriteString(`<div class="isu-posts">`)
+		for _, p := range postHTMLs {
+			buf.WriteString(p.HTML)
+		}
+		buf.WriteString(`</div>`)
+		return buf.String(), nil
+	})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	var buf bytes.Buffer
-	buf.WriteString(`<div class="isu-posts">`)
-	for _, p := range postHTMLs {
-		buf.WriteString(p.HTML)
-	}
-	buf.WriteString(`</div>`)
-
-	postsHTML := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
+	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
 
 	var buf2 bytes.Buffer
 	err = getIndexTmpl.Execute(&buf2, struct {
@@ -502,7 +511,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML)))
+	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML.(string))))
 }
 
 var getAccountTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -671,7 +680,6 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
 	var buf bytes.Buffer
-
 	err = getPostsIDTmpl.Execute(&buf, struct {
 		CSRFToken string
 		Me        User

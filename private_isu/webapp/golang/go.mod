@@ -10,6 +10,7 @@ require (
 	github.com/gorilla/sessions v1.2.1
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/samber/lo v1.38.1
+	golang.org/x/sync v0.5.0
 )
 
 require (
