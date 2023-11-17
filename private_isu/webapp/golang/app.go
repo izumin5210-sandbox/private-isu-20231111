@@ -506,7 +506,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 			postsPerPage,
 		)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 
 		buf, clean := bufPool.Get()
@@ -516,14 +516,14 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 			buf.WriteString(p.HTML)
 		}
 		buf.WriteString(`</div>`)
-		return buf.Bytes(), nil
+		return buf.String(), nil
 	})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	postsHTML = bytes.ReplaceAll(postsHTML.([]byte), []byte(CSRFTokenPlaceholder), []byte(getCSRFToken(r)))
+	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
 
 	buf, clean := bufPool.Get()
 	defer clean()
@@ -538,7 +538,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(bytes.ReplaceAll(buf.Bytes(), []byte("{{.PostsHTML}}"), postsHTML.([]byte))))
+	w.Write([]byte(strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", postsHTML.(string))))
 }
 
 var getAccountTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -613,7 +613,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := bytes.ReplaceAll(buf2.Bytes(), []byte("{{.PostsHTML}}"), bytes.ReplaceAll(buf.Bytes(), []byte(CSRFTokenPlaceholder), []byte(getCSRFToken(r))))
+	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r)))
 	w.Write([]byte(html))
 }
 
@@ -659,9 +659,9 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	}
 	buf.WriteString(`</div>`)
 
-	html := bytes.ReplaceAll(buf.Bytes(), []byte(CSRFTokenPlaceholder), []byte(getCSRFToken(r)))
+	html := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
 
-	w.Write(html)
+	w.Write([]byte(html))
 }
 
 var getPostsIDTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -702,8 +702,8 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := bytes.ReplaceAll(buf.Bytes(), []byte("{{.PostsHTML}}"), []byte(postHTML.HTMLWithAllComments))
-	w.Write(html)
+	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", postHTML.HTMLWithAllComments)
+	w.Write([]byte(html))
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
