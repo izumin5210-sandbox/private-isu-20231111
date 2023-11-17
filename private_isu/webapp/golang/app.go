@@ -580,7 +580,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	var buf2 bytes.Buffer
 
-	err = getAccountTmpl.Execute(&buf, struct {
+	err = getAccountTmpl.Execute(&buf2, struct {
 		CSRFToken      string
 		User           User
 		PostCount      int
@@ -594,7 +594,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", buf2.String())
+	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", buf.String())
 	w.Write([]byte(html))
 }
 
