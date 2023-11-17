@@ -485,19 +485,22 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		"imageURL": imageURL,
 	}
 
+	var buf2 bytes.Buffer
 	err = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("index.html"),
-	)).Execute(w, struct {
+	)).Execute(&buf2, struct {
 		Me        User
 		CSRFToken string
 		PostsHTML string
 		Flash     string
-	}{me, getCSRFToken(r), postsHTML, getFlash(w, r, "notice")})
+	}{me, getCSRFToken(r), "{{.PostsHTML}}", getFlash(w, r, "notice")})
 	if err != nil {
 		log.Print(err)
 		return
 	}
+
+	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML)))
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
