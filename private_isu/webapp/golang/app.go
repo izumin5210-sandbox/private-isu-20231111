@@ -473,13 +473,11 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString(`{{ define "posts.html" }}` + "\n")
 	buf.WriteString(`<div class="isu-posts">`)
 	for _, p := range postHTMLs {
 		buf.WriteString(p.HTML)
 	}
 	buf.WriteString(`</div>`)
-	buf.WriteString("\n" + `{{ end }}`)
 
 	postsHTML := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
 
