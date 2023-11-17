@@ -29,6 +29,7 @@ import (
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 	"github.com/samber/lo"
+	"golang.org/x/sync/singleflight"
 )
 
 var (
@@ -466,29 +467,37 @@ var getIndexTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFi
 	getTemplPath("index.html"),
 ))
 
+var getIndexSg singleflight.Group
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	postHTMLs := []PostHTML{}
+	postsHTML, err, _ := getIndexSg.Do("index", func() (interface{}, error) {
+		postHTMLs := []PostHTML{}
 
-	err := db.Select(
-		&postHTMLs,
-		"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
-		postsPerPage,
-	)
+		err := db.Select(
+			&postHTMLs,
+			"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
+			postsPerPage,
+		)
+		if err != nil {
+			return "", err
+		}
+
+		var buf bytes.Buffer
+		buf.WriteString(`<div class="isu-posts">`)
+		for _, p := range postHTMLs {
+			buf.WriteString(p.HTML)
+		}
+		buf.WriteString(`</div>`)
+		return buf.String(), nil
+	})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	var buf bytes.Buffer
-	buf.WriteString(`<div class="isu-posts">`)
-	for _, p := range postHTMLs {
-		buf.WriteString(p.HTML)
-	}
-	buf.WriteString(`</div>`)
-
-	postsHTML := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
+	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
 
 	var buf2 bytes.Buffer
 	err = getIndexTmpl.Execute(&buf2, struct {
@@ -502,7 +511,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML)))
+	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML.(string))))
 }
 
 var getAccountTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -598,6 +607,8 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
+var getPostsSg singleflight.Group
+
 func getPosts(w http.ResponseWriter, r *http.Request) {
 	m, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
@@ -616,30 +627,41 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postHTMLs := []PostHTML{}
-	err = db.Select(
-		&postHTMLs,
-		"SELECT `html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`created_at` <= ? ORDER BY `posts`.`created_at` DESC LIMIT ?",
-		t.Format(ISO8601Format), postsPerPage,
-	)
+	postsHTML, err, _ := getPostsSg.Do(maxCreatedAt, func() (interface{}, error) {
+		postHTMLs := []PostHTML{}
+		err = db.Select(
+			&postHTMLs,
+			"SELECT `html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`created_at` <= ? ORDER BY `posts`.`created_at` DESC LIMIT ?",
+			t.Format(ISO8601Format), postsPerPage,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(postHTMLs) == 0 {
+			return "", nil
+		}
+
+		var buf bytes.Buffer
+		buf.WriteString(`<div class="isu-posts">`)
+		for _, p := range postHTMLs {
+			buf.WriteString(p.HTML)
+		}
+		buf.WriteString(`</div>`)
+
+		return buf.String(), nil
+	})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	if len(postHTMLs) == 0 {
+	if len(postsHTML.(string)) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	var buf bytes.Buffer
-	buf.WriteString(`<div class="isu-posts">`)
-	for _, p := range postHTMLs {
-		buf.WriteString(p.HTML)
-	}
-	buf.WriteString(`</div>`)
-
-	html := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
+	html := strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
 
 	w.Write([]byte(html))
 }
@@ -649,6 +671,8 @@ var getPostsIDTmpl = template.Must(template.New("layout.html").Funcs(fmap).Parse
 	getTemplPath("post_id.html"),
 ))
 
+var getPostsIDSg singleflight.Group
+
 func getPostsID(w http.ResponseWriter, r *http.Request) {
 	pidStr := chi.URLParam(r, "id")
 	pid, err := strconv.Atoi(pidStr)
@@ -657,21 +681,29 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var postHTML PostHTML
-	err = db.Get(&postHTML, "SELECT `post_htmls`.`html_with_all_comments` FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` = ? AND `del_flg` = 0", pid)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			w.WriteHeader(http.StatusNotFound)
-			return
+	postsHTML, err, _ := getPostsIDSg.Do(pidStr, func() (interface{}, error) {
+		var postHTML PostHTML
+		err = db.Get(&postHTML, "SELECT `post_htmls`.`html_with_all_comments` FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` = ? AND `del_flg` = 0", pid)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return "", nil
+			}
+			return "", err
 		}
+		return postHTML.HTMLWithAllComments, nil
+	})
+	if err != nil {
 		log.Print(err)
+		return
+	}
+	if len(postsHTML.(string)) == 0 {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	me := getSessionUser(r)
 
 	var buf bytes.Buffer
-
 	err = getPostsIDTmpl.Execute(&buf, struct {
 		CSRFToken string
 		Me        User
@@ -682,7 +714,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", postHTML.HTMLWithAllComments)
+	html := strings.ReplaceAll(buf.String(), "{{.PostsHTML}}", postsHTML.(string))
 	w.Write([]byte(html))
 }
 
