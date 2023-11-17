@@ -34,6 +34,10 @@ import (
 var (
 	db    *sqlx.DB
 	store *gsm.MemcacheStore
+
+	fmap = template.FuncMap{
+		"imageURL": imageURL,
+	}
 )
 
 const (
@@ -457,6 +461,11 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+var getIndexTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("index.html"),
+))
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
@@ -481,15 +490,8 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	postsHTML := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
 	var buf2 bytes.Buffer
-	err = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-	)).Execute(&buf2, struct {
+	err = getIndexTmpl.Execute(&buf2, struct {
 		Me        User
 		CSRFToken string
 		PostsHTML string
@@ -502,6 +504,11 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML)))
 }
+
+var getAccountTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("user.html"),
+))
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
 	accountName := chi.URLParam(r, "accountName")
@@ -573,14 +580,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("user.html"),
-	)).Parse(buf.String())).Execute(w, struct {
+	template.Must(template.Must(getAccountTmpl.Clone()).Parse(buf.String())).Execute(w, struct {
 		CSRFToken      string
 		User           User
 		PostCount      int
@@ -636,6 +636,11 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
+var getPostsIDTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("post_id.html"),
+))
+
 func getPostsID(w http.ResponseWriter, r *http.Request) {
 	pidStr := chi.URLParam(r, "id")
 	pid, err := strconv.Atoi(pidStr)
@@ -657,14 +662,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("post_id.html"),
-	)).Parse(`{{ define "post.html" }}`+"\n"+postHTML.HTMLWithAllComments+"\n"+`{{ end }}`)).Execute(w, struct {
+	template.Must(template.Must(getPostsIDTmpl.Clone()).Parse(`{{ define "post.html" }}`+"\n"+postHTML.HTMLWithAllComments+"\n"+`{{ end }}`)).Execute(w, struct {
 		CSRFToken string
 		Me        User
 	}{getCSRFToken(r), me})
@@ -831,6 +829,11 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
 }
 
+var getAdminBannedTmpl = template.Must(template.ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("banned.html"),
+))
+
 func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 	if !isLogin(me) {
@@ -850,10 +853,7 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("banned.html")),
-	).Execute(w, struct {
+	getAdminBannedTmpl.Execute(w, struct {
 		Users     []User
 		Me        User
 		CSRFToken string
