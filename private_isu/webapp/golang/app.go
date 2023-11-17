@@ -594,7 +594,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", buf.String())
+	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r)))
 	w.Write([]byte(html))
 }
 
