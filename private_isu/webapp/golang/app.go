@@ -80,6 +80,8 @@ type PostHTML struct {
 	HTMLWithAllComments string `db:"html_with_all_comments"`
 }
 
+var CSRFTokenPlaceholder = "{{.CSRFToken}}"
+
 func prerenderPostHTML(postID int) error {
 	var rawPost Post
 	err := db.Get(&rawPost, "SELECT `id`, `user_id`, `body`, `mime`, `created_at`, `comment_count` FROM `posts` WHERE `id` = ?", postID)
@@ -87,7 +89,7 @@ func prerenderPostHTML(postID int) error {
 		return err
 	}
 
-	posts, err := makePosts([]Post{rawPost}, "{{.CSRFToken}}", true)
+	posts, err := makePosts([]Post{rawPost}, CSRFTokenPlaceholder, true)
 	if err != nil {
 		return err
 	}
@@ -471,30 +473,34 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString(`{{ define "posts.html" }}` + "\n")
 	buf.WriteString(`<div class="isu-posts">`)
 	for _, p := range postHTMLs {
 		buf.WriteString(p.HTML)
 	}
 	buf.WriteString(`</div>`)
-	buf.WriteString("\n" + `{{ end }}`)
+
+	postsHTML := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
 
 	fmap := template.FuncMap{
 		"imageURL": imageURL,
 	}
 
-	err = template.Must(template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	var buf2 bytes.Buffer
+	err = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("index.html"),
-	)).Parse(buf.String())).Execute(w, struct {
+	)).Execute(&buf2, struct {
 		Me        User
 		CSRFToken string
+		PostsHTML string
 		Flash     string
-	}{me, getCSRFToken(r), getFlash(w, r, "notice")})
+	}{me, getCSRFToken(r), "{{.PostsHTML}}", getFlash(w, r, "notice")})
 	if err != nil {
 		log.Print(err)
 		return
 	}
+
+	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML)))
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
@@ -625,13 +631,9 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	}
 	buf.WriteString(`</div>`)
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
+	html := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
 
-	template.Must(
-		template.New("posts.html").Funcs(fmap).Parse(buf.String()),
-	).Execute(w, struct{ CSRFToken string }{getCSRFToken(r)})
+	w.Write([]byte(html))
 }
 
 func getPostsID(w http.ResponseWriter, r *http.Request) {
