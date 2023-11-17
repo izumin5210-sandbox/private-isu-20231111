@@ -473,7 +473,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	err := db.Select(
 		&postHTMLs,
-		"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
+		"SELECT `post_htmls`.`html` FROM `posts` INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
 		postsPerPage,
 	)
 	if err != nil {
@@ -619,7 +619,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	postHTMLs := []PostHTML{}
 	err = db.Select(
 		&postHTMLs,
-		"SELECT `html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`created_at` <= ? ORDER BY `posts`.`created_at` DESC LIMIT ?",
+		"SELECT `html` FROM `posts` INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`created_at` <= ? ORDER BY `posts`.`created_at` DESC LIMIT ?",
 		t.Format(ISO8601Format), postsPerPage,
 	)
 	if err != nil {
