@@ -34,6 +34,10 @@ import (
 var (
 	db    *sqlx.DB
 	store *gsm.MemcacheStore
+
+	fmap = template.FuncMap{
+		"imageURL": imageURL,
+	}
 )
 
 const (
@@ -457,6 +461,11 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+var getIndexTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	getTemplPath("layout.html"),
+	getTemplPath("index.html"),
+))
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
@@ -481,15 +490,8 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	postsHTML := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
 	var buf2 bytes.Buffer
-	err = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-	)).Execute(&buf2, struct {
+	err = getIndexTmpl.Execute(&buf2, struct {
 		Me        User
 		CSRFToken string
 		PostsHTML string
