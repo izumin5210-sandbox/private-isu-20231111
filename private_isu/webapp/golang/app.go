@@ -556,33 +556,14 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postIDs := []int{}
-	err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
+	var cnts struct {
+		PostCount      int `db:"post_count"`
+		CommentedCount int `db:"commented_count"`
+	}
+	err = db.Get(&cnts, "SELECT COUNT(`id`) AS `post_count`, SUM(`comment_count`)  AS `commented_count` FROM `posts` WHERE `user_id` = ?", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
-	}
-	postCount := len(postIDs)
-
-	commentedCount := 0
-	if postCount > 0 {
-		s := []string{}
-		for range postIDs {
-			s = append(s, "?")
-		}
-		placeholder := strings.Join(s, ", ")
-
-		// convert []int -> []interface{}
-		args := make([]interface{}, len(postIDs))
-		for i, v := range postIDs {
-			args[i] = v
-		}
-
-		err = db.Get(&commentedCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
-		if err != nil {
-			log.Print(err)
-			return
-		}
 	}
 
 	me := getSessionUser(r)
@@ -597,7 +578,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		CommentedCount int
 		Me             User
 		PostsHTML      string
-	}{getCSRFToken(r), user, postCount, commentCount, commentedCount, me, "{{.PostsHTML}}"})
+	}{getCSRFToken(r), user, cnts.PostCount, commentCount, cnts.CommentedCount, me, "{{.PostsHTML}}"})
 	if err != nil {
 		log.Print(err)
 		return
