@@ -215,7 +215,7 @@ func init() {
 type BytesPool struct{ pool sync.Pool }
 
 func NewBytesPool() *BytesPool {
-	return &BytesPool{pool: sync.Pool{New: func() interface{} { b := make([]byte, 0, 1024); return b }}}
+	return &BytesPool{pool: sync.Pool{New: func() interface{} { b := make([]byte, 0, 1024); return &b }}}
 }
 
 func (p *BytesPool) Get() ([]byte, func()) {
