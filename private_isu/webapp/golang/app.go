@@ -314,7 +314,10 @@ func calculatePasshash(accountName, password string) string {
 }
 
 func getSession(r *http.Request) *sessions.Session {
-	session, _ := store.Get(r, "isuconp-go.session")
+	session, err := store.Get(r, "isuconp-go.session")
+	if err != nil {
+		log.Println(err)
+	}
 
 	return session
 }
