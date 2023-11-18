@@ -212,40 +212,80 @@ func calculatePasshash(accountName, password string) string {
 	return digest(password + ":" + calculateSalt(accountName))
 }
 
-func getSession(r *http.Request) *sessions.Session {
+type Session struct {
+	req   *http.Request
+	raw   *sessions.Session
+	user  *User
+	flash map[string]string
+}
+
+func getSession(r *http.Request) *Session {
 	session, _ := store.Get(r, "isuconp-go.session")
 
-	return session
+	return &Session{req: r, raw: session, flash: map[string]string{}}
 }
 
-func getSessionUser(r *http.Request) User {
-	session := getSession(r)
-	uid, ok := session.Values["user_id"]
-	if !ok || uid == nil {
-		return User{}
+func (s *Session) GetUser() User {
+	if s.user == nil {
+		uid, ok := s.raw.Values["user_id"]
+		if !ok || uid == nil {
+			s.user = &User{}
+		}
+
+		u := User{}
+
+		err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+		if err != nil {
+			u = User{}
+		}
+		s.user = &u
 	}
 
-	u := User{}
-
-	err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
-	if err != nil {
-		return User{}
-	}
-
-	return u
+	return *s.user
 }
 
-func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
-	session := getSession(r)
-	value, ok := session.Values[key]
+func (s *Session) GetFlash(w http.ResponseWriter, key string) string {
+	f, ok := s.flash[key]
+	if ok {
+		return f
+	}
+	value, ok := s.raw.Values[key]
 
 	if !ok || value == nil {
-		return ""
+		f = ""
 	} else {
-		delete(session.Values, key)
-		session.Save(r, w)
-		return value.(string)
+		delete(s.raw.Values, key)
+		s.raw.Save(s.req, w)
+		f = value.(string)
 	}
+
+	s.flash[key] = f
+	return f
+}
+
+func (s *Session) GetCSRFToken() string {
+	csrfToken, ok := s.raw.Values["csrf_token"]
+	if !ok {
+		return ""
+	}
+	return csrfToken.(string)
+}
+
+func (s *Session) Login(w http.ResponseWriter, userID int) {
+	s.raw.Values["user_id"] = userID
+	s.raw.Values["csrf_token"] = secureRandomStr(16)
+	s.raw.Save(s.req, w)
+}
+
+func (s *Session) Logout(w http.ResponseWriter) {
+	delete(s.raw.Values, "user_id")
+	s.raw.Options = &sessions.Options{MaxAge: -1}
+	s.raw.Save(s.req, w)
+}
+
+func (s *Session) SetFlash(w http.ResponseWriter, key string, msg string) {
+	s.raw.Values[key] = msg
+	s.raw.Save(s.req, w)
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
@@ -344,15 +384,6 @@ func isLogin(u User) bool {
 	return u.ID != 0
 }
 
-func getCSRFToken(r *http.Request) string {
-	session := getSession(r)
-	csrfToken, ok := session.Values["csrf_token"]
-	if !ok {
-		return ""
-	}
-	return csrfToken.(string)
-}
-
 func secureRandomStr(b int) string {
 	k := make([]byte, b)
 	if _, err := crand.Read(k); err != nil {
@@ -371,7 +402,8 @@ func getInitialize(w http.ResponseWriter, r *http.Request) {
 }
 
 func getLogin(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 
 	if isLogin(me) {
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -384,11 +416,12 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 	).Execute(w, struct {
 		Me    User
 		Flash string
-	}{me, getFlash(w, r, "notice")})
+	}{me, sess.GetFlash(w, "notice")})
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
-	if isLogin(getSessionUser(r)) {
+	sess := getSession(r)
+	if isLogin(sess.GetUser()) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -396,23 +429,19 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	u := tryLogin(r.FormValue("account_name"), r.FormValue("password"))
 
 	if u != nil {
-		session := getSession(r)
-		session.Values["user_id"] = u.ID
-		session.Values["csrf_token"] = secureRandomStr(16)
-		session.Save(r, w)
+		sess.Login(w, u.ID)
 
 		http.Redirect(w, r, "/", http.StatusFound)
 	} else {
-		session := getSession(r)
-		session.Values["notice"] = "アカウント名かパスワードが間違っています"
-		session.Save(r, w)
+		sess.SetFlash(w, "notice", "アカウント名かパスワードが間違っています")
 
 		http.Redirect(w, r, "/login", http.StatusFound)
 	}
 }
 
 func getRegister(w http.ResponseWriter, r *http.Request) {
-	if isLogin(getSessionUser(r)) {
+	sess := getSession(r)
+	if isLogin(sess.GetUser()) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -423,11 +452,12 @@ func getRegister(w http.ResponseWriter, r *http.Request) {
 	).Execute(w, struct {
 		Me    User
 		Flash string
-	}{User{}, getFlash(w, r, "notice")})
+	}{User{}, sess.GetFlash(w, "notice")})
 }
 
 func postRegister(w http.ResponseWriter, r *http.Request) {
-	if isLogin(getSessionUser(r)) {
+	sess := getSession(r)
+	if isLogin(sess.GetUser()) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -436,10 +466,7 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 
 	validated := validateUser(accountName, password)
 	if !validated {
-		session := getSession(r)
-		session.Values["notice"] = "アカウント名は3文字以上、パスワードは6文字以上である必要があります"
-		session.Save(r, w)
-
+		sess.SetFlash(w, "notice", "アカウント名は3文字以上、パスワードは6文字以上である必要があります")
 		http.Redirect(w, r, "/register", http.StatusFound)
 		return
 	}
@@ -449,10 +476,7 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 	db.Get(&exists, "SELECT 1 FROM users WHERE `account_name` = ?", accountName)
 
 	if exists == 1 {
-		session := getSession(r)
-		session.Values["notice"] = "アカウント名がすでに使われています"
-		session.Save(r, w)
-
+		sess.SetFlash(w, "notice", "アカウント名がすでに使われています")
 		http.Redirect(w, r, "/register", http.StatusFound)
 		return
 	}
@@ -464,25 +488,19 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := getSession(r)
 	uid, err := result.LastInsertId()
 	if err != nil {
 		log.Print(err)
 		return
 	}
-	session.Values["user_id"] = uid
-	session.Values["csrf_token"] = secureRandomStr(16)
-	session.Save(r, w)
+	sess.Login(w, int(uid))
 
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func getLogout(w http.ResponseWriter, r *http.Request) {
-	session := getSession(r)
-	delete(session.Values, "user_id")
-	session.Options = &sessions.Options{MaxAge: -1}
-	session.Save(r, w)
-
+	sess := getSession(r)
+	sess.Logout(w)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -494,7 +512,8 @@ var getIndexTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFi
 var getIndexSg singleflight.Group
 
 func getIndex(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 
 	postsHTML, err, _ := getIndexSg.Do("index", func() (interface{}, error) {
 		postHTMLs := []PostHTML{}
@@ -521,7 +540,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
+	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, sess.GetCSRFToken())
 
 	var buf2 bytes.Buffer
 	err = getIndexTmpl.Execute(&buf2, struct {
@@ -529,7 +548,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		CSRFToken string
 		PostsHTML string
 		Flash     string
-	}{me, getCSRFToken(r), "{{.PostsHTML}}", getFlash(w, r, "notice")})
+	}{me, sess.GetCSRFToken(), "{{.PostsHTML}}", sess.GetFlash(w, "notice")})
 	if err != nil {
 		log.Print(err)
 		return
@@ -590,7 +609,8 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 
 	var buf2 bytes.Buffer
 
@@ -602,13 +622,13 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		CommentedCount int
 		Me             User
 		PostsHTML      string
-	}{getCSRFToken(r), user, cnts.PostCount, commentCount, cnts.CommentedCount, me, "{{.PostsHTML}}"})
+	}{sess.GetCSRFToken(), user, cnts.PostCount, commentCount, cnts.CommentedCount, me, "{{.PostsHTML}}"})
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r)))
+	html := strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, sess.GetCSRFToken()))
 	w.Write([]byte(html))
 }
 
@@ -653,7 +673,8 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	}
 	buf.WriteString(`</div>`)
 
-	html := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, getCSRFToken(r))
+	sess := getSession(r)
+	html := strings.ReplaceAll(buf.String(), CSRFTokenPlaceholder, sess.GetCSRFToken())
 
 	w.Write([]byte(html))
 }
@@ -682,14 +703,15 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 
 	var buf bytes.Buffer
 	err = getPostsIDTmpl.Execute(&buf, struct {
 		CSRFToken string
 		Me        User
 		PostsHTML string
-	}{getCSRFToken(r), me, "{{.PostsHTML}}"})
+	}{sess.GetCSRFToken(), me, "{{.PostsHTML}}"})
 	if err != nil {
 		log.Print(err)
 		return
@@ -700,23 +722,21 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 	if !isLogin(me) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 
-	if r.FormValue("csrf_token") != getCSRFToken(r) {
+	if r.FormValue("csrf_token") != sess.GetCSRFToken() {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		session := getSession(r)
-		session.Values["notice"] = "画像が必須です"
-		session.Save(r, w)
-
+		sess.SetFlash(w, "notice", "画像が必須です")
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -736,10 +756,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 			ext = "gif"
 			mime = "image/gif"
 		} else {
-			session := getSession(r)
-			session.Values["notice"] = "投稿できる画像形式はjpgとpngとgifだけです"
-			session.Save(r, w)
-
+			sess.SetFlash(w, "notice", "投稿できる画像形式はjpgとpngとgifだけです")
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
@@ -752,10 +769,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(filedata) > UploadLimit {
-		session := getSession(r)
-		session.Values["notice"] = "ファイルサイズが大きすぎます"
-		session.Save(r, w)
-
+		sess.SetFlash(w, "notice", "ファイルサイズが大きすぎます")
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -802,13 +816,14 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func postComment(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 	if !isLogin(me) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 
-	if r.FormValue("csrf_token") != getCSRFToken(r) {
+	if r.FormValue("csrf_token") != sess.GetCSRFToken() {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
@@ -866,7 +881,8 @@ var getAdminBannedTmpl = template.Must(template.ParseFiles(
 ))
 
 func getAdminBanned(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 	if !isLogin(me) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -888,11 +904,12 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 		Users     []User
 		Me        User
 		CSRFToken string
-	}{users, me, getCSRFToken(r)})
+	}{users, me, sess.GetCSRFToken()})
 }
 
 func postAdminBanned(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
+	sess := getSession(r)
+	me := sess.GetUser()
 	if !isLogin(me) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -903,7 +920,7 @@ func postAdminBanned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.FormValue("csrf_token") != getCSRFToken(r) {
+	if r.FormValue("csrf_token") != sess.GetCSRFToken() {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
