@@ -123,7 +123,18 @@ func prerenderPostHTML(postID int) error {
 		return err
 	}
 
-	_, err = db.Exec("INSERT INTO `post_htmls` (`post_id`, `user_id`, `html`, `html_with_all_comments`) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE `html` = ?, `html_with_all_comments` = ?", post.ID, post.UserID, htmlBuf.String(), htmlWithAllCommentsBuf.String(), htmlBuf.String(), htmlWithAllCommentsBuf.String())
+	_, err = db.Exec("INSERT INTO `post_htmls` (`post_id`, `user_id`, `html`, `html_with_all_comments`, `post_created_at`, `user_del_flg`) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `html` = ?, `html_with_all_comments` = ?, `post_created_at` = ?, `user_del_flg` = ?",
+		post.ID,
+		post.UserID,
+		htmlBuf.String(),
+		htmlWithAllCommentsBuf.String(),
+		post.CreatedAt,
+		post.User.DelFlg,
+		htmlBuf.String(),
+		htmlWithAllCommentsBuf.String(),
+		post.CreatedAt,
+		post.User.DelFlg,
+	)
 	if err != nil {
 		return err
 	}
@@ -146,8 +157,11 @@ func dbInitialize() {
 		"DELETE FROM users WHERE id > 1000",
 		"DELETE FROM posts WHERE id > 10000",
 		"DELETE FROM comments WHERE id > 100000",
+		"DELETE FROM post_htmls WHERE post_id > 10000",
 		"UPDATE users SET del_flg = 0",
 		"UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
+		"UPDATE post_htmls SET user_del_flg = 0",
+		"UPDATE post_htmls SET user_del_flg = 1 WHERE user_id % 50 = 0",
 	}
 
 	for _, sql := range sqls {
@@ -477,7 +491,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 		err := db.Select(
 			&postHTMLs,
-			"SELECT `post_htmls`.`html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `post_htmls`.`post_id` = `posts`.`id` ORDER BY `posts`.`created_at` DESC LIMIT ?",
+			"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 ORDER BY `post_created_at` DESC LIMIT ?",
 			postsPerPage,
 		)
 		if err != nil {
@@ -536,7 +550,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	postHTMLs := []PostHTML{}
 
-	err = db.Select(&postHTMLs, "SELECT `html` FROM `posts` INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`user_id` = ? ORDER BY `created_at` DESC", user.ID)
+	err = db.Select(&postHTMLs, "SELECT `html` FROM `post_htmls` WHERE `post_htmls`.`user_id` = ? ORDER BY `post_created_at` DESC", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
@@ -609,7 +623,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	postHTMLs := []PostHTML{}
 	err = db.Select(
 		&postHTMLs,
-		"SELECT `html` FROM `posts` FORCE INDEX (`created_at`) INNER JOIN `users` ON `users`.`id` = `posts`.`user_id` AND `users`.`del_flg` = 0 INNER JOIN `post_htmls` ON `posts`.`id` = `post_htmls`.`post_id` WHERE `posts`.`created_at` <= ? ORDER BY `posts`.`created_at` DESC LIMIT ?",
+		"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 AND `post_created_at` <= ? ORDER BY `post_created_at` DESC LIMIT ?",
 		t.Format(ISO8601Format), postsPerPage,
 	)
 	if err != nil {
@@ -648,7 +662,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var postHTML PostHTML
-	err = db.Get(&postHTML, "SELECT `post_htmls`.`html_with_all_comments` FROM `post_htmls` INNER JOIN `users` ON `users`.`id` = `post_htmls`.`user_id` WHERE `post_id` = ? AND `del_flg` = 0", pid)
+	err = db.Get(&postHTML, "SELECT `html_with_all_comments` FROM `post_htmls` WHERE `post_id` = ? AND `user_del_flg` = 0", pid)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			w.WriteHeader(http.StatusNotFound)
@@ -884,16 +898,28 @@ func postAdminBanned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "UPDATE `users` SET `del_flg` = ? WHERE `id` = ?"
-
 	err := r.ParseForm()
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	for _, id := range r.Form["uid[]"] {
-		db.Exec(query, 1, id)
+	{
+		q, args, err := sqlx.In("UPDATE `users` SET `del_flg` = ? WHERE `id` IN (?)", 1, r.Form["uid[]"])
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		db.Exec(q, args...)
+	}
+
+	{
+		q, args, err := sqlx.In("UPDATE `post_htmls` SET `user_del_flg` = ? WHERE `user_id` IN (?)", 1, r.Form["uid[]"])
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		db.Exec(q, args...)
 	}
 
 	http.Redirect(w, r, "/admin/banned", http.StatusFound)
