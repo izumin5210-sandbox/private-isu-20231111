@@ -271,18 +271,27 @@ func (s *Session) GetCSRFToken() string {
 func (s *Session) Login(w http.ResponseWriter, userID int) {
 	s.raw.Values["user_id"] = userID
 	s.raw.Values["csrf_token"] = secureRandomStr(16)
-	s.raw.Save(s.req, w)
+	err := s.raw.Save(s.req, w)
+	if err != nil {
+		log.Print(err)
+	}
 }
 
 func (s *Session) Logout(w http.ResponseWriter) {
 	delete(s.raw.Values, "user_id")
 	s.raw.Options = &sessions.Options{MaxAge: -1}
-	s.raw.Save(s.req, w)
+	err := s.raw.Save(s.req, w)
+	if err != nil {
+		log.Print(err)
+	}
 }
 
 func (s *Session) SetFlash(w http.ResponseWriter, key string, msg string) {
 	s.raw.Values[key] = msg
-	s.raw.Save(s.req, w)
+	err := s.raw.Save(s.req, w)
+	if err != nil {
+		log.Print(err)
+	}
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
