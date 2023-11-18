@@ -123,7 +123,7 @@ func prerenderPostHTML(postID int) error {
 		return err
 	}
 
-	_, err = db.Exec("INSERT INTO `post_htmls` (`post_id`, `user_id`, `html`, `html_with_all_comments`, `post_created_at`, `user_del_flg`) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE `html` = ?, `html_with_all_comments` = ?",
+	_, err = db.Exec("INSERT INTO `post_htmls` (`post_id`, `user_id`, `html`, `html_with_all_comments`, `post_created_at`, `user_del_flg`) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `html` = ?, `html_with_all_comments` = ?, `post_created_at` = ?, `user_del_flg` = ?",
 		post.ID,
 		post.UserID,
 		htmlBuf.String(),
