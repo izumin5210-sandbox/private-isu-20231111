@@ -253,7 +253,7 @@ func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, er
 func (s *redisStoreJSONSerializer) Deserialize(b []byte, sess *sessions.Session) error {
 	m, clean := s.mapPool.Get()
 	defer clean()
-	err := json.NewDecoder(bytes.NewReader(b)).Decode(&m)
+	err := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(b))).Decode(&m)
 	if err != nil {
 		return err
 	}
