@@ -231,7 +231,11 @@ func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, er
 	b, clean := s.bytesPool.Get()
 	defer clean()
 	buf := bytes.NewBuffer(b)
-	err := json.NewEncoder(buf).Encode(sess.Values)
+	m := make(map[string]interface{}, len(sess.Values))
+	for k, v := range sess.Values {
+		m[k.(string)] = v
+	}
+	err := json.NewEncoder(buf).Encode(m)
 	if err != nil {
 		return nil, err
 	}
