@@ -485,7 +485,10 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 		session := getSession(r)
 		session.Values["user_id"] = u.ID
 		session.Values["csrf_token"] = secureRandomStr(16)
-		session.Save(r, w)
+		err = session.Save(r, w)
+		if err != nil {
+			log.Print(err)
+		}
 
 		http.Redirect(w, r, "/", http.StatusFound)
 	} else {
