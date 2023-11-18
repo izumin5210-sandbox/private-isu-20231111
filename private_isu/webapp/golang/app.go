@@ -444,7 +444,7 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	u := tryLogin(r.FormValue("account_name"), r.FormValue("password"))
 
 	if u != nil {
-		err := redisClient.HSet(context.Background(), fmt.Sprintf("user:%d", u.ID), UserForLayout{ID: u.ID, AccountName: u.AccountName, Authority: u.Authority}).Err()
+		err := redisClient.HMSet(context.Background(), fmt.Sprintf("user:%d", u.ID), UserForLayout{ID: u.ID, AccountName: u.AccountName, Authority: u.Authority}).Err()
 		if err != nil {
 			log.Print(err)
 			return
