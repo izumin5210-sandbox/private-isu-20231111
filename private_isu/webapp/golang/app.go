@@ -34,8 +34,9 @@ import (
 )
 
 var (
-	db    *sqlx.DB
-	store *redisstore.RedisStore
+	db          *sqlx.DB
+	redisClient *redis.Client
+	store       *redisstore.RedisStore
 
 	fmap = template.FuncMap{
 		"imageURL": imageURL,
@@ -140,7 +141,47 @@ func prerenderPostHTML(postID int) error {
 		return err
 	}
 
+	err = prerenderIndexPosts()
+	if err != nil {
+		return fmt.Errorf("failed to prerender index posts: %w", err)
+	}
 	return nil
+}
+
+func prerenderIndexPosts() error {
+	postHTMLs := []PostHTML{}
+
+	err := db.Select(
+		&postHTMLs,
+		"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 ORDER BY `post_created_at` DESC LIMIT ?",
+		postsPerPage,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to post_htmls: %w", err)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(`<div class="isu-posts">`)
+	for _, p := range postHTMLs {
+		buf.WriteString(p.HTML)
+	}
+	buf.WriteString(`</div>`)
+
+	err = redisClient.Set(context.Background(), "index", buf.String(), 0).Err()
+	if err != nil {
+		return fmt.Errorf("failed to set redis: %w", err)
+	}
+
+	return nil
+}
+
+func getPrerenderedPosts() (string, error) {
+	html, err := redisClient.Get(context.Background(), "index").Result()
+	if err != nil {
+		return "", fmt.Errorf("failed to get prerendered index from redis: %w", err)
+	}
+	return html, nil
+
 }
 
 func init() {
@@ -150,7 +191,7 @@ func init() {
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
-	client := redis.NewClient(&redis.Options{Addr: redisAddr})
+	redisClient = redis.NewClient(&redis.Options{Addr: redisAddr})
 
 	var err error
 	// New default RedisStore
@@ -367,6 +408,7 @@ func getTemplPath(filename string) string {
 
 func getInitialize(w http.ResponseWriter, r *http.Request) {
 	dbInitialize()
+	prerenderIndexPosts()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -496,32 +538,13 @@ var getIndexSg singleflight.Group
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	postsHTML, err, _ := getIndexSg.Do("index", func() (interface{}, error) {
-		postHTMLs := []PostHTML{}
-
-		err := db.Select(
-			&postHTMLs,
-			"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 ORDER BY `post_created_at` DESC LIMIT ?",
-			postsPerPage,
-		)
-		if err != nil {
-			return "", err
-		}
-
-		var buf bytes.Buffer
-		buf.WriteString(`<div class="isu-posts">`)
-		for _, p := range postHTMLs {
-			buf.WriteString(p.HTML)
-		}
-		buf.WriteString(`</div>`)
-		return buf.String(), nil
-	})
+	postsHTML, err := getPrerenderedPosts()
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	postsHTML = strings.ReplaceAll(postsHTML.(string), CSRFTokenPlaceholder, getCSRFToken(r))
+	postsHTML = strings.ReplaceAll(postsHTML, CSRFTokenPlaceholder, getCSRFToken(r))
 
 	var buf2 bytes.Buffer
 	err = getIndexTmpl.Execute(&buf2, struct {
@@ -535,7 +558,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML.(string))))
+	w.Write([]byte(strings.ReplaceAll(buf2.String(), "{{.PostsHTML}}", postsHTML)))
 }
 
 var getAccountTmpl = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
