@@ -418,6 +418,19 @@ func getInitialize(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+var FlashPlcaeholder = "{{.Flash}}"
+var loginHTML = func() []byte {
+	var buf bytes.Buffer
+	template.Must(template.ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("login.html")),
+	).Execute(&buf, struct {
+		Me    User
+		Flash string
+	}{User{}, FlashPlcaeholder})
+	return buf.Bytes()
+}()
+
 func getLogin(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
@@ -426,13 +439,7 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("login.html")),
-	).Execute(w, struct {
-		Me    UserForLayout
-		Flash string
-	}{me, getFlash(w, r, "notice")})
+	strings.NewReplacer(FlashPlcaeholder, getFlash(w, r, "notice")).WriteString(w, string(loginHTML))
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
