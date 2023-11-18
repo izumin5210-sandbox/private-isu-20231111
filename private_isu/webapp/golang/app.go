@@ -208,30 +208,38 @@ func init() {
 		log.Fatal("failed to create redis store: ", err)
 	}
 
-	store.Serializer(&redisStoreJSONSerializer{bytesPool: NewBytesPool()})
+	store.Serializer(&redisStoreJSONSerializer{
+		bytesPool: NewPool(func() []byte { return make([]byte, 1024) }),
+		mapPool:   NewPool(func() map[string]any { return make(map[string]any, 4) }),
+	})
 	store.KeyPrefix("isucogram_")
 }
 
-type BytesPool struct{ pool sync.Pool }
+type Pool[T any] struct{ pool sync.Pool }
 
-func NewBytesPool() *BytesPool {
-	return &BytesPool{pool: sync.Pool{New: func() interface{} { b := make([]byte, 0, 1024); return &b }}}
+func NewPool[T any](newFunc func() T) *Pool[T] {
+	return &Pool[T]{pool: sync.Pool{New: func() any {
+		v := newFunc()
+		return &v
+	}}}
 }
 
-func (p *BytesPool) Get() ([]byte, func()) {
-	buf := p.pool.Get().(*[]byte)
-	return *buf, func() { p.pool.Put(buf) }
+func (p *Pool[T]) Get() (T, func()) {
+	v := p.pool.Get().(*T)
+	return *v, func() { p.pool.Put(v) }
 }
 
 type redisStoreJSONSerializer struct {
-	bytesPool *BytesPool
+	bytesPool *Pool[[]byte]
+	mapPool   *Pool[map[string]any]
 }
 
 func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, error) {
-	b, clean := s.bytesPool.Get()
-	defer clean()
+	b, clean1 := s.bytesPool.Get()
+	defer clean1()
 	buf := bytes.NewBuffer(b)
-	m := make(map[string]interface{}, len(sess.Values))
+	m, clean2 := s.mapPool.Get()
+	defer clean2()
 	for k, v := range sess.Values {
 		m[k.(string)] = v
 	}
@@ -243,7 +251,16 @@ func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, er
 }
 
 func (s *redisStoreJSONSerializer) Deserialize(b []byte, sess *sessions.Session) error {
-	return json.NewDecoder(bytes.NewReader(b)).Decode(&sess.Values)
+	m, clean := s.mapPool.Get()
+	defer clean()
+	err := json.NewDecoder(bytes.NewReader(b)).Decode(&m)
+	if err != nil {
+		return err
+	}
+	for k, v := range m {
+		sess.Values[k] = v
+	}
+	return nil
 }
 
 func dbInitialize() {
