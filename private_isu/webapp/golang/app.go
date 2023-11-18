@@ -527,6 +527,12 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 	session.Values["csrf_token"] = secureRandomStr(16)
 	session.Save(r, w)
 
+	err = redisClient.HMSet(context.Background(), fmt.Sprintf("user:%d", uid), UserForLayout{ID: int(uid), AccountName: accountName, Authority: 0}).Err()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
