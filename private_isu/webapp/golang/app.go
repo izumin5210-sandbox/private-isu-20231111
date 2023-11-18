@@ -673,7 +673,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	postHTMLs := []PostHTML{}
 	err = db.Select(
 		&postHTMLs,
-		"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 AND `post_created_at` <= ? ORDER BY `post_created_at` DESC LIMIT ?",
+		"SELECT `html` FROM `post_htmls` FORCE INDEX (`user_del_flg`) WHERE `user_del_flg` = 0 AND `post_created_at` <= ? ORDER BY `post_created_at` DESC LIMIT ?",
 		t.Format(ISO8601Format), postsPerPage,
 	)
 	if err != nil {
