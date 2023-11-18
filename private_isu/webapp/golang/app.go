@@ -728,15 +728,15 @@ type BufPool struct{ pool *sync.Pool }
 func NewBufPool() *BufPool {
 	return &BufPool{&sync.Pool{
 		New: func() interface{} {
-			return make([]byte, 0, 1024*1024)
+			buf := make([]byte, 1024*1024)
+			return &buf
 		},
 	}}
 }
 
 func (p *BufPool) Get() ([]byte, func()) {
-	buf := p.pool.Get().([]byte)
-	return buf, func() {
-		buf = buf[:0]
+	buf := p.pool.Get().(*[]byte)
+	return *buf, func() {
 		p.pool.Put(buf)
 	}
 }
