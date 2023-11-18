@@ -195,7 +195,7 @@ func init() {
 
 	var err error
 	// New default RedisStore
-	store, err = redisstore.NewRedisStore(context.Background(), client)
+	store, err = redisstore.NewRedisStore(context.Background(), redisClient)
 	if err != nil {
 		log.Fatal("failed to create redis store: ", err)
 	}
