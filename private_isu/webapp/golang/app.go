@@ -488,7 +488,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 		err := db.Select(
 			&postHTMLs,
-			"SELECT `html` FROM `post_htmls` WHERE `user_del_flg = 0` ORDER BY `created_at` DESC LIMIT ?",
+			"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 ORDER BY `post_created_at` DESC LIMIT ?",
 			postsPerPage,
 		)
 		if err != nil {
