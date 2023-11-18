@@ -229,7 +229,7 @@ func (s *Session) GetUser() User {
 	if s.user == nil {
 		u := User{}
 		uid, ok := s.raw.Values["user_id"]
-		if ok && uid == nil {
+		if ok && uid != nil {
 			err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
 			if err != nil {
 				u = User{}
