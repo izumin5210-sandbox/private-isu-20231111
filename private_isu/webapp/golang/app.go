@@ -547,7 +547,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	postHTMLs := []PostHTML{}
 
-	err = db.Select(&postHTMLs, "SELECT `html` FROM `post_htmls` WHERE `post_htmls`.`user_id` = ? ORDER BY `created_at` DESC", user.ID)
+	err = db.Select(&postHTMLs, "SELECT `html` FROM `post_htmls` WHERE `post_htmls`.`user_id` = ? ORDER BY `post_created_at` DESC", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
