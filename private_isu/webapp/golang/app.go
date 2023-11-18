@@ -274,7 +274,7 @@ func getSessionUser(r *http.Request) UserForLayout {
 
 	u := UserForLayout{}
 
-	err := redisClient.HGetAll(context.Background(), fmt.Sprintf("user:%d", uid.(int64))).Scan(&u)
+	err := redisClient.HGetAll(context.Background(), fmt.Sprintf("user:%d", uid)).Scan(&u)
 	if err != nil {
 		return UserForLayout{}
 	}
