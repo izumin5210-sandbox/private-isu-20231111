@@ -747,25 +747,27 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
-type BufPool struct{ pool *sync.Pool }
-
-func NewBufPool() *BufPool {
-	return &BufPool{&sync.Pool{
-		New: func() interface{} {
-			buf := make([]byte, 1024*1024)
-			return &buf
-		},
-	}}
+type Pool[T any] struct {
+	pool      sync.Pool
+	resetFunc func(v *T)
 }
 
-func (p *BufPool) Get() ([]byte, func()) {
-	buf := p.pool.Get().(*[]byte)
-	return *buf, func() {
-		p.pool.Put(buf)
+func NewPool[T any](newFunc func() T, resetFunc func(v *T)) *Pool[T] {
+	return &Pool[T]{
+		pool:      sync.Pool{New: func() any { v := newFunc(); return &v }},
+		resetFunc: resetFunc,
 	}
 }
 
-var imgCopyBufPool = NewBufPool()
+func (p *Pool[T]) Get() (T, func()) {
+	v := p.pool.Get().(*T)
+	return *v, func() { p.resetFunc(v); p.pool.Put(v) }
+}
+
+var imgCopyBufPool = NewPool[[]byte](
+	func() []byte { return make([]byte, 1024*1024) },
+	func(_ *[]byte) {},
+)
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
