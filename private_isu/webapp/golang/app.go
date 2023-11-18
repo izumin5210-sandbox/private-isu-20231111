@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -722,6 +723,26 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
+type BufPool struct{ pool *sync.Pool }
+
+func NewBufPool() *BufPool {
+	return &BufPool{&sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 0, 1024*1024))
+		},
+	}}
+}
+
+func (p *BufPool) Get() (*bytes.Buffer, func()) {
+	buf := p.pool.Get().(*bytes.Buffer)
+	return buf, func() {
+		buf.Reset()
+		p.pool.Put(buf)
+	}
+}
+
+var imgBufPool = NewBufPool()
+
 func postIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 	if !isLogin(me) {
@@ -768,13 +789,15 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filedata, err := io.ReadAll(file)
+	imgBuf, clean := imgBufPool.Get()
+	defer clean()
+	len, err := io.Copy(imgBuf, file)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	if len(filedata) > UploadLimit {
+	if len > UploadLimit {
 		session := getSession(r)
 		session.Values["notice"] = "ファイルサイズが大きすぎます"
 		session.Save(r, w)
@@ -809,7 +832,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer osFile.Close()
-	_, err = osFile.Write(filedata)
+	_, err = io.Copy(osFile, imgBuf)
 	if err != nil {
 		log.Print(err)
 		return
