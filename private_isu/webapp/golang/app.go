@@ -209,7 +209,7 @@ func init() {
 	}
 
 	store.Serializer(&redisStoreJSONSerializer{
-		bytesPool: NewPool(func() []byte { return make([]byte, 1024) }),
+		bytesPool: NewPool(func() []byte { return make([]byte, 0, 1024) }),
 		mapPool:   NewPool(func() map[string]any { return make(map[string]any, 4) }),
 	})
 	store.KeyPrefix("isucogram_")
@@ -236,6 +236,7 @@ type redisStoreJSONSerializer struct {
 
 func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, error) {
 	b, clean1 := s.bytesPool.Get()
+	b = b[:0]
 	defer clean1()
 	buf := bytes.NewBuffer(b)
 	m, clean2 := s.mapPool.Get()
