@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"crypto/sha512"
 	"database/sql"
@@ -22,19 +23,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bradfitz/gomemcache/memcache"
-	gsm "github.com/bradleypeabody/gorilla-sessions-memcache"
 	"github.com/go-chi/chi/v5"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
+	"github.com/rbcervilla/redisstore/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/samber/lo"
 	"golang.org/x/sync/singleflight"
 )
 
 var (
 	db    *sqlx.DB
-	store *gsm.MemcacheStore
+	store *redisstore.RedisStore
 
 	fmap = template.FuncMap{
 		"imageURL": imageURL,
@@ -143,13 +144,22 @@ func prerenderPostHTML(postID int) error {
 }
 
 func init() {
-	memdAddr := os.Getenv("ISUCONP_MEMCACHED_ADDRESS")
-	if memdAddr == "" {
-		memdAddr = "localhost:11211"
-	}
-	memcacheClient := memcache.New(memdAddr)
-	store = gsm.NewMemcacheStore(memcacheClient, "iscogram_", []byte("sendagaya"))
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
+	redisAddr := os.Getenv("ISUCONP_REDIS_ADDRESS")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	client := redis.NewClient(&redis.Options{Addr: redisAddr})
+
+	var err error
+	// New default RedisStore
+	store, err = redisstore.NewRedisStore(context.Background(), client)
+	if err != nil {
+		log.Fatal("failed to create redis store: ", err)
+	}
+
+	store.KeyPrefix("isucogram_")
 }
 
 func dbInitialize() {
