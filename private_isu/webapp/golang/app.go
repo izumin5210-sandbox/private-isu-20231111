@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -206,7 +208,38 @@ func init() {
 		log.Fatal("failed to create redis store: ", err)
 	}
 
+	store.Serializer(&redisStoreJSONSerializer{bytesPool: NewBytesPool()})
 	store.KeyPrefix("isucogram_")
+}
+
+type BytesPool struct{ pool sync.Pool }
+
+func NewBytesPool() *BytesPool {
+	return &BytesPool{pool: sync.Pool{New: func() interface{} { b := make([]byte, 0, 1024); return b }}}
+}
+
+func (p *BytesPool) Get() ([]byte, func()) {
+	buf := p.pool.Get().(*[]byte)
+	return *buf, func() { p.pool.Put(buf) }
+}
+
+type redisStoreJSONSerializer struct {
+	bytesPool *BytesPool
+}
+
+func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, error) {
+	b, clean := s.bytesPool.Get()
+	defer clean()
+	buf := bytes.NewBuffer(b)
+	err := json.NewEncoder(buf).Encode(sess.Values)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (s *redisStoreJSONSerializer) Deserialize(b []byte, sess *sessions.Session) error {
+	return json.NewDecoder(bytes.NewReader(b)).Decode(&sess.Values)
 }
 
 func dbInitialize() {
