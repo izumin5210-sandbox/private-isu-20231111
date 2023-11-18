@@ -230,11 +230,12 @@ func (s *Session) GetUser() User {
 		u := User{}
 		uid, ok := s.raw.Values["user_id"]
 		if ok && uid == nil {
-		err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
-		if err != nil {
-			u = User{}
+			err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+			if err != nil {
+				u = User{}
+			}
 		}
-		s.user= u
+		s.user = &u
 	}
 
 	return *s.user
