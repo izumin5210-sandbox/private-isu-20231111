@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -722,6 +723,26 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(html))
 }
 
+type BufPool struct{ pool *sync.Pool }
+
+func NewBufPool() *BufPool {
+	return &BufPool{&sync.Pool{
+		New: func() interface{} {
+			return make([]byte, 0, 1024*1024)
+		},
+	}}
+}
+
+func (p *BufPool) Get() ([]byte, func()) {
+	buf := p.pool.Get().([]byte)
+	return buf, func() {
+		buf = buf[:0]
+		p.pool.Put(buf)
+	}
+}
+
+var imgCopyBufPool = NewBufPool()
+
 func postIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 	if !isLogin(me) {
@@ -804,7 +825,9 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer osFile.Close()
-	_, err = io.Copy(osFile, file)
+	copyBuf, clean := imgCopyBufPool.Get()
+	defer clean()
+	_, err = io.CopyBuffer(osFile, file, copyBuf)
 	if err != nil {
 		log.Print(err)
 		return
