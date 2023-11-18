@@ -141,38 +141,67 @@ func prerenderPostHTML(postID int) error {
 		return err
 	}
 
-	err = prerenderIndexPosts()
+	err = flushIndexPostsHTMLCache()
 	if err != nil {
-		return fmt.Errorf("failed to prerender index posts: %w", err)
+		return err
+	}
+
+	return nil
+}
+
+var getIndexPostsHTMLSg singleflight.Group
+
+func flushIndexPostsHTMLCache() error {
+	err := redisClient.Del(context.Background(), "index").Err()
+	if err != nil {
+		return fmt.Errorf("failed to flush index posts html cache: %w", err)
 	}
 	return nil
 }
 
-func prerenderIndexPosts() error {
-	postHTMLs := []PostHTML{}
+func getIndexPostsHTML() (string, error) {
+	html, err, _ := getIndexPostsHTMLSg.Do("index", func() (interface{}, error) {
+		html, err := redisClient.Get(context.Background(), "index").Result()
+		if err == nil {
+			return html, nil
+		}
+		if err != nil && err != redis.Nil {
+			return "", fmt.Errorf("failed to get prerendered index from redis: %w", err)
+		}
 
-	err := db.Select(
-		&postHTMLs,
-		"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 ORDER BY `post_created_at` DESC LIMIT ?",
-		postsPerPage,
-	)
+		postHTMLs := []PostHTML{}
+
+		err = db.Select(
+			&postHTMLs,
+			"SELECT `html` FROM `post_htmls` WHERE `user_del_flg` = 0 ORDER BY `post_created_at` DESC LIMIT ?",
+			postsPerPage,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate post_htmls: %w", err)
+		}
+
+		var buf bytes.Buffer
+		buf.WriteString(`<div class="isu-posts">`)
+		for _, p := range postHTMLs {
+			buf.WriteString(p.HTML)
+		}
+		buf.WriteString(`</div>`)
+
+		html = buf.String()
+
+		err = redisClient.Set(context.Background(), "index", html, 0).Err()
+		if err != nil {
+			return "", fmt.Errorf("failed to set redis: %w", err)
+		}
+
+		return buf.String(), nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("failed to post_htmls: %w", err)
+		return "", err
 	}
 
-	var buf bytes.Buffer
-	buf.WriteString(`<div class="isu-posts">`)
-	for _, p := range postHTMLs {
-		buf.WriteString(p.HTML)
-	}
-	buf.WriteString(`</div>`)
-
-	err = redisClient.Set(context.Background(), "index", buf.String(), 0).Err()
-	if err != nil {
-		return fmt.Errorf("failed to set redis: %w", err)
-	}
-
-	return nil
+	return html.(string), nil
 }
 
 func getPrerenderedPosts() (string, error) {
@@ -408,7 +437,7 @@ func getTemplPath(filename string) string {
 
 func getInitialize(w http.ResponseWriter, r *http.Request) {
 	dbInitialize()
-	prerenderIndexPosts()
+	flushIndexPostsHTMLCache()
 	w.WriteHeader(http.StatusOK)
 }
 
