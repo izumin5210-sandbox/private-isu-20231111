@@ -266,7 +266,7 @@ func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, er
 func (s *redisStoreJSONSerializer) Deserialize(b []byte, sess *sessions.Session) error {
 	m, clean := s.mapPool.Get()
 	defer clean()
-	err := json.NewDecoder(bytes.NewReader(bytes.Trim(b, "\x00"))).Decode(&m)
+	err := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(b))).Decode(&m)
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func getSessionUser(r *http.Request) UserForLayout {
 
 	u := UserForLayout{}
 
-	err := redisClient.HGetAll(context.Background(), fmt.Sprintf("user:%d", uid)).Scan(&u)
+	err := redisClient.HGetAll(context.Background(), fmt.Sprintf("user:%d", int(uid.(float64)))).Scan(&u)
 	if err != nil {
 		return UserForLayout{}
 	}
