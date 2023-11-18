@@ -58,6 +58,12 @@ type User struct {
 	CreatedAt   time.Time `db:"created_at"`
 }
 
+type UserForLayout struct {
+	ID          int    `redis:"id"`
+	AccountName string `redis:"account_name"`
+	Authority   int    `redis:"authority"`
+}
+
 type Post struct {
 	ID           int       `db:"id"`
 	UserID       int       `db:"user_id"`
@@ -259,18 +265,18 @@ func getSession(r *http.Request) *sessions.Session {
 	return session
 }
 
-func getSessionUser(r *http.Request) User {
+func getSessionUser(r *http.Request) UserForLayout {
 	session := getSession(r)
 	uid, ok := session.Values["user_id"]
 	if !ok || uid == nil {
-		return User{}
+		return UserForLayout{}
 	}
 
-	u := User{}
+	u := UserForLayout{}
 
-	err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+	err := redisClient.HGetAll(context.Background(), fmt.Sprintf("user:%d", uid)).Scan(&u)
 	if err != nil {
-		return User{}
+		return UserForLayout{}
 	}
 
 	return u
@@ -381,7 +387,7 @@ func imageURL(p Post) string {
 	return "/image/" + strconv.Itoa(p.ID) + ext
 }
 
-func isLogin(u User) bool {
+func isLogin(u UserForLayout) bool {
 	return u.ID != 0
 }
 
@@ -424,7 +430,7 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 		getTemplPath("layout.html"),
 		getTemplPath("login.html")),
 	).Execute(w, struct {
-		Me    User
+		Me    UserForLayout
 		Flash string
 	}{me, getFlash(w, r, "notice")})
 }
@@ -438,6 +444,11 @@ func postLogin(w http.ResponseWriter, r *http.Request) {
 	u := tryLogin(r.FormValue("account_name"), r.FormValue("password"))
 
 	if u != nil {
+		err := redisClient.HMSet(context.Background(), fmt.Sprintf("user:%d", u.ID), UserForLayout{ID: u.ID, AccountName: u.AccountName, Authority: u.Authority}).Err()
+		if err != nil {
+			log.Print(err)
+			return
+		}
 		session := getSession(r)
 		session.Values["user_id"] = u.ID
 		session.Values["csrf_token"] = secureRandomStr(16)
@@ -516,6 +527,12 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 	session.Values["csrf_token"] = secureRandomStr(16)
 	session.Save(r, w)
 
+	err = redisClient.HMSet(context.Background(), fmt.Sprintf("user:%d", uid), UserForLayout{ID: int(uid), AccountName: accountName, Authority: 0}).Err()
+	if err != nil {
+		log.Print(err)
+		return
+	}
+
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -548,7 +565,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	var buf2 bytes.Buffer
 	err = getIndexTmpl.Execute(&buf2, struct {
-		Me        User
+		Me        UserForLayout
 		CSRFToken string
 		PostsHTML string
 		Flash     string
@@ -623,7 +640,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
-		Me             User
+		Me             UserForLayout
 		PostsHTML      string
 	}{getCSRFToken(r), user, cnts.PostCount, commentCount, cnts.CommentedCount, me, "{{.PostsHTML}}"})
 	if err != nil {
@@ -710,7 +727,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	err = getPostsIDTmpl.Execute(&buf, struct {
 		CSRFToken string
-		Me        User
+		Me        UserForLayout
 		PostsHTML string
 	}{getCSRFToken(r), me, "{{.PostsHTML}}"})
 	if err != nil {
@@ -909,7 +926,7 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 
 	getAdminBannedTmpl.Execute(w, struct {
 		Users     []User
-		Me        User
+		Me        UserForLayout
 		CSRFToken string
 	}{users, me, getCSRFToken(r)})
 }
