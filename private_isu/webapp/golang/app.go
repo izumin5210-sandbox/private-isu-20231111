@@ -157,7 +157,7 @@ func dbInitialize() {
 		"DELETE FROM users WHERE id > 1000",
 		"DELETE FROM posts WHERE id > 10000",
 		"DELETE FROM comments WHERE id > 100000",
-		"DELETE FROM post_htmls WHERE post_id > 100000",
+		"DELETE FROM post_htmls WHERE post_id > 10000",
 		"UPDATE users SET del_flg = 0",
 		"UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
 		"UPDATE post_htmls SET user_del_flg = 0",
