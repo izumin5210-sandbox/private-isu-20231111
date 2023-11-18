@@ -209,24 +209,37 @@ func init() {
 	}
 
 	store.Serializer(&redisStoreJSONSerializer{
-		bytesPool: NewPool(func() []byte { return make([]byte, 0, 1024) }),
-		mapPool:   NewPool(func() map[string]any { return make(map[string]any, 4) }),
+		bytesPool: NewPool(
+			func() []byte { return make([]byte, 0, 1024) },
+			func(b *[]byte) { *b = (*b)[:0] },
+		),
+		mapPool: NewPool(
+			func() map[string]any { return make(map[string]any, 4) },
+			func(m *map[string]any) {
+				for k := range *m {
+					delete(*m, k)
+				}
+			},
+		),
 	})
 	store.KeyPrefix("isucogram_")
 }
 
-type Pool[T any] struct{ pool sync.Pool }
+type Pool[T any] struct {
+	pool      sync.Pool
+	resetFunc func(v *T)
+}
 
-func NewPool[T any](newFunc func() T) *Pool[T] {
-	return &Pool[T]{pool: sync.Pool{New: func() any {
-		v := newFunc()
-		return &v
-	}}}
+func NewPool[T any](newFunc func() T, resetFunc func(v *T)) *Pool[T] {
+	return &Pool[T]{
+		pool:      sync.Pool{New: func() any { v := newFunc(); return &v }},
+		resetFunc: resetFunc,
+	}
 }
 
 func (p *Pool[T]) Get() (T, func()) {
 	v := p.pool.Get().(*T)
-	return *v, func() { p.pool.Put(v) }
+	return *v, func() { p.resetFunc(v); p.pool.Put(v) }
 }
 
 type redisStoreJSONSerializer struct {
@@ -236,7 +249,6 @@ type redisStoreJSONSerializer struct {
 
 func (s *redisStoreJSONSerializer) Serialize(sess *sessions.Session) ([]byte, error) {
 	b, clean1 := s.bytesPool.Get()
-	b = b[:0]
 	defer clean1()
 	buf := bytes.NewBuffer(b)
 	m, clean2 := s.mapPool.Get()
