@@ -128,7 +128,10 @@ func prerenderPostHTML(postID int) error {
 		post.UserID,
 		htmlBuf.String(),
 		htmlWithAllCommentsBuf.String(),
+		post.CreatedAt,
+		post.User.DelFlg,
 		htmlBuf.String(),
+		htmlWithAllCommentsBuf.String(),
 		post.CreatedAt,
 		post.User.DelFlg,
 	)
