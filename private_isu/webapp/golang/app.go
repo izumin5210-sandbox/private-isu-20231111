@@ -227,18 +227,14 @@ func getSession(r *http.Request) *Session {
 
 func (s *Session) GetUser() User {
 	if s.user == nil {
-		uid, ok := s.raw.Values["user_id"]
-		if !ok || uid == nil {
-			s.user = &User{}
-		}
-
 		u := User{}
-
+		uid, ok := s.raw.Values["user_id"]
+		if ok && uid == nil {
 		err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
 		if err != nil {
 			u = User{}
 		}
-		s.user = &u
+		s.user= u
 	}
 
 	return *s.user
