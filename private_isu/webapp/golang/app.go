@@ -204,15 +204,6 @@ func getIndexPostsHTML() (string, error) {
 	return html.(string), nil
 }
 
-func getPrerenderedPosts() (string, error) {
-	html, err := redisClient.Get(context.Background(), "index").Result()
-	if err != nil {
-		return "", fmt.Errorf("failed to get prerendered index from redis: %w", err)
-	}
-	return html, nil
-
-}
-
 func init() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
@@ -567,7 +558,7 @@ var getIndexSg singleflight.Group
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	postsHTML, err := getPrerenderedPosts()
+	postsHTML, err := getIndexPostsHTML()
 	if err != nil {
 		log.Print(err)
 		return
